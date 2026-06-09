@@ -1,0 +1,1126 @@
+/**
+ * Selection Inspector
+ *
+ * TEXT MODE:  Shows paragraph style, character style(s), font size, leading,
+ *             tracking. Match Properties with tolerance; step-through navigation.
+ *
+ * FRAME MODE: Shows frame type, object style, width, height.
+ *             Match Properties with tolerance; step-through navigation.
+ *
+ * CELL MODE:  Shows cell style, height, width, insets, and parent table info.
+ *             Match against any combination; tags cells from the same table.
+ *
+ * TABLE MODE: Shows table style, row count, column count.
+ *             Match against style, rows, and/or columns.
+ *
+ * Navigation and Merge powered by app.doScript() for reliable engine access.
+ */
+
+(function () {
+
+    if (!app.documents.length) { alert("No document open."); return; }
+
+    var doc = app.activeDocument;
+    var sel = app.selection;
+
+    if (!sel || !sel.length) { alert("Nothing selected."); return; }
+
+    var s0 = sel[0];
+    if (!s0 || !s0.isValid) { alert("Selection is not valid."); return; }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    function safeStr(fn) {
+        try { var v = fn(); return (v !== null && v !== undefined) ? String(v) : "\u2014"; }
+        catch (e) { return "\u2014"; }
+    }
+
+    function roundTo(n, dec) {
+        var f = Math.pow(10, dec);
+        return Math.round(n * f) / f;
+    }
+
+    function getCharStylesInPara(para) {
+        var seen = {}, names = [];
+        try {
+            var chars = para.characters;
+            for (var i = 0; i < chars.length; i++) {
+                try {
+                    var n = chars[i].appliedCharacterStyle.name;
+                    if (!seen[n]) { seen[n] = true; names.push(n); }
+                } catch (e) {}
+            }
+        } catch (e) {}
+        return names.length ? names.join(", ") : "[None]";
+    }
+
+    function getParaPage(para) {
+        try {
+            var frame = para.parentTextFrames[0];
+            if (frame && frame.isValid) {
+                var page = frame.parentPage;
+                if (page && page.isValid) return page.name;
+            }
+        } catch (e) {}
+        return "?";
+    }
+
+    function getItemPage(item) {
+        try {
+            var page = item.parentPage;
+            if (page && page.isValid) return page.name;
+        } catch (e) {}
+        return "?";
+    }
+
+    // Convert FirstBaseline enum value to a human-readable display string
+    function baselineOffsetName(val) {
+        try { if (val === FirstBaseline.ASCENT_OFFSET) return "Ascent"; }      catch (e) {}
+        try { if (val === FirstBaseline.CAP_HEIGHT)    return "Cap Height"; }   catch (e) {}
+        try { if (val === FirstBaseline.LEADING)       return "Leading"; }      catch (e) {}
+        try { if (val === FirstBaseline.EMBOX_HEIGHT)  return "Em Box Height"; }catch (e) {}
+        try { if (val === FirstBaseline.FIXED_HEIGHT)  return "Fixed"; }        catch (e) {}
+        try { if (val === FirstBaseline.X_HEIGHT)      return "x Height"; }     catch (e) {}
+        return String(val);
+    }
+
+    function getTablePage(tbl) {
+        try {
+            var fr = tbl.parent;
+            while (fr && fr.constructor && fr.constructor.name !== "TextFrame") {
+                fr = fr.parent;
+            }
+            if (fr && fr.parentPage) return fr.parentPage.name;
+        } catch (e) {}
+        return "?";
+    }
+
+    function trunc(str, len) {
+        try {
+            var s = str.replace(/\r|\n/g, " ");
+            return s.length > len ? s.substring(0, len) + "\u2026" : s;
+        } catch (e) { return ""; }
+    }
+
+    function fmtDev(delta) {
+        var r = roundTo(delta, 2);
+        return (r >= 0 ? "+" : "") + r;
+    }
+
+    function buildDevFlag(dev) {
+        if (!dev) return "";
+        var parts = [];
+        if (dev.fontSize        !== undefined && dev.fontSize        !== 0)  parts.push("size "    + fmtDev(dev.fontSize)   + " pt");
+        if (dev.leading         !== undefined && dev.leading         !== 0)  parts.push("leading " + fmtDev(dev.leading)    + " pt");
+        if (dev.tracking        !== undefined && dev.tracking        !== 0)  parts.push("tracking "+ fmtDev(dev.tracking));
+        if (dev.width           !== undefined && dev.width           !== 0)  parts.push("w "       + fmtDev(dev.width)      + " pt");
+        if (dev.height          !== undefined && dev.height          !== 0)  parts.push("h "       + fmtDev(dev.height)     + " pt");
+        if (dev.cellWidth       !== undefined && dev.cellWidth       !== 0)  parts.push("cell-w "  + fmtDev(dev.cellWidth)  + " pt");
+        if (dev.cellHeight      !== undefined && dev.cellHeight      !== 0)  parts.push("cell-h "  + fmtDev(dev.cellHeight) + " pt");
+        // String-valued passive style deviation — rendered with → rather than ±
+        if (dev.styleDeviation  !== undefined && dev.styleDeviation  !== "") parts.push("style \u2192 \"" + dev.styleDeviation + "\"");
+        return parts.length ? "  [\u03b4 " + parts.join(", ") + "]" : "";
+    }
+
+    // Returns true if any property in dev is non-zero (i.e. the match is fuzzy)
+    function hasDev(dev) {
+        if (!dev) return false;
+        for (var k in dev) {
+            if (!dev.hasOwnProperty(k)) continue;
+            var v = dev[k];
+            if (typeof v === "string"  && v !== "") return true;
+            if (typeof v === "number"  && v !== 0)  return true;
+        }
+        return false;
+    }
+
+    // Human-readable labels for each deviation key
+    var DEV_LABELS = {
+        fontSize:       "Font Size",
+        leading:        "Leading",
+        tracking:       "Tracking",
+        width:          "Width",
+        height:         "Height",
+        cellWidth:      "Cell Width",
+        cellHeight:     "Cell Height",
+        styleDeviation: "Style"
+    };
+
+    // ── Navigation functions ─────────────────────────────────────────────────
+
+    function navToPara(para) {
+        try {
+            var frame = para.parentTextFrames[0];
+            if (!frame || !frame.isValid) return;
+            var page = frame.parentPage;
+            if (!page || !page.isValid) return;
+            app.activeWindow.activePage = page;
+            para.select();
+        } catch (e) {}
+    }
+
+    function navToItem(item) {
+        try {
+            var page = item.parentPage;
+            if (!page || !page.isValid) return;
+            app.activeWindow.activePage = page;
+            app.select(item);
+        } catch (e) {}
+    }
+
+    function navToCell(cell) {
+        try {
+            var stories = doc.stories;
+            for (var si = 0; si < stories.length; si++) {
+                try {
+                    var tbls = stories[si].tables;
+                    for (var ti = 0; ti < tbls.length; ti++) {
+                        if (tbls[ti].id === cell.parent.id) {
+                            var fr = tbls[ti].parent;
+                            while (fr && fr.constructor && fr.constructor.name !== "TextFrame") fr = fr.parent;
+                            if (fr && fr.parentPage) app.activeWindow.activePage = fr.parentPage;
+                        }
+                    }
+                } catch (e) {}
+            }
+            app.select(cell);
+        } catch (e) {}
+    }
+
+    function navToTable(tbl) {
+        try {
+            var fr = tbl.parent;
+            while (fr && fr.constructor && fr.constructor.name !== "TextFrame") fr = fr.parent;
+            if (fr && fr.parentPage) app.activeWindow.activePage = fr.parentPage;
+            app.select(tbl);
+        } catch (e) {}
+    }
+
+    // ── Listbox helpers ──────────────────────────────────────────────────────
+
+    function getSelectedIndices(lb) {
+        var indices = [];
+        if (!lb.selection) return indices;
+        var sel = lb.selection;
+        if (typeof sel.length === "number") {
+            for (var i = 0; i < sel.length; i++) indices.push(sel[i].index);
+        } else {
+            indices.push(sel.index);
+        }
+        indices.sort(function (a, b) { return a - b; });
+        return indices;
+    }
+
+    function restoreSelection(lb, indices) {
+        for (var i = 0; i < lb.items.length; i++) lb.items[i].selected = false;
+        for (var j = 0; j < indices.length; j++) {
+            if (indices[j] >= 0 && indices[j] < lb.items.length) {
+                lb.items[indices[j]].selected = true;
+            }
+        }
+    }
+
+    // ── Core navigator — runs inside app.doScript ────────────────────────────
+    //
+    // Each match object: { ref, baseEntry, entry, dev, props }
+    //   ref       — live InDesign object
+    //   baseEntry — display string without deviation flag
+    //   entry     — baseEntry + buildDevFlag(dev), updated after a Merge
+    //   dev       — { fontSize: δ, leading: δ, … } — zero means exact
+    //   props     — "Matched on" summary lines
+    //
+    // mergeFn(match) — mode-specific function that writes target values back
+    //   to the InDesign object and zeroes the relevant dev keys.
+    //   Pass null for modes with no numeric deviations (Table mode).
+    //
+    function runStepThrough(matches, navFn, label, mergeFn) {
+        if (!matches || matches.length === 0) { alert("No matching " + label + " found."); return; }
+
+        var total        = matches.length;
+        var subset       = [];
+        var subsetCursor = -1;
+        var navStarted   = false;
+        var keepGoing    = true;
+
+        while (keepGoing) {
+
+            // Rebuild entry strings on every iteration so Merge updates are reflected
+            var entryStrings = [];
+            for (var ei = 0; ei < matches.length; ei++) entryStrings.push(matches[ei].entry);
+
+            var listDlg = new Window("dialog", "Match Results");
+            listDlg.alignChildren = ["fill", "top"];
+            listDlg.margins = 18;
+            listDlg.spacing = 10;
+            listDlg.preferredSize.width = 460;
+
+            // ── Matched-on summary ───────────────────────────────────────────
+            var hdrSec = listDlg.add("panel", undefined, "Matched on");
+            hdrSec.alignChildren = ["left", "top"];
+            hdrSec.margins = [10, 15, 10, 10];
+            hdrSec.alignment = ["fill", "top"];
+            var propsArr = matches[0].props;
+            for (var pi = 0; pi < propsArr.length; pi++) {
+                hdrSec.add("statictext", undefined, "\u2022  " + propsArr[pi]);
+            }
+
+            // ── Scrollable result list (multi-select) ────────────────────────
+            var listSec = listDlg.add("panel", undefined, "Results  (" + total + " " + label + ")");
+            listSec.alignChildren = ["fill", "top"];
+            listSec.margins = [10, 15, 10, 10];
+            listSec.alignment = ["fill", "top"];
+
+            var lb = listSec.add("listbox", undefined, entryStrings, { multiselect: true });
+            lb.preferredSize = [420, 220];
+
+            if (subset.length > 0) restoreSelection(lb, subset);
+
+            // ── Buttons ──────────────────────────────────────────────────────
+            var btnGrp = listDlg.add("group");
+            btnGrp.alignment = "right";
+            btnGrp.spacing = 8;
+            var mergeBtn = btnGrp.add("button", undefined, "Merge");
+            var prevBtn  = btnGrp.add("button", undefined, "\u2190 Previous");
+            var nextBtn  = btnGrp.add("button", undefined, "Next \u2192");
+            var closeBtn = btnGrp.add("button", undefined, "Close");
+
+            // Merge disabled if no mergeFn (Table mode) or nothing selected
+            mergeBtn.enabled = (mergeFn !== null && subset.length > 0);
+            prevBtn.enabled  = (subset.length > 0);
+            nextBtn.enabled  = (subset.length > 0);
+
+            lb.onChange = function () {
+                var newSel = getSelectedIndices(lb);
+                var hasNew = (newSel.length > 0);
+                nextBtn.enabled  = hasNew;
+                prevBtn.enabled  = hasNew;
+                mergeBtn.enabled = (mergeFn !== null && hasNew);
+                if (newSel.join(",") !== subset.join(",")) navStarted = false;
+            };
+
+            var action        = "close";
+            var pendingMerge  = [];  // deviant indices to write — populated in onClick,
+                                     // consumed in the while loop (engine context)
+
+            nextBtn.onClick = function () {
+                var current = getSelectedIndices(lb);
+                if (current.length === 0) return;
+                if (!navStarted || current.join(",") !== subset.join(",")) {
+                    subset = current; subsetCursor = 0; navStarted = true;
+                } else {
+                    subsetCursor = Math.min(subsetCursor + 1, subset.length - 1);
+                }
+                action = "navigate";
+                listDlg.close();
+            };
+
+            prevBtn.onClick = function () {
+                var current = getSelectedIndices(lb);
+                if (current.length === 0) return;
+                if (!navStarted || current.join(",") !== subset.join(",")) {
+                    subset = current; subsetCursor = subset.length - 1; navStarted = true;
+                } else {
+                    subsetCursor = Math.max(subsetCursor - 1, 0);
+                }
+                action = "navigate";
+                listDlg.close();
+            };
+
+            mergeBtn.onClick = function () {
+                var current = getSelectedIndices(lb);
+                if (current.length === 0) return;
+
+                // Identify which selected items are actually deviants
+                var deviants    = [];
+                var devPropSeen = {};
+                for (var di = 0; di < current.length; di++) {
+                    var m = matches[current[di]];
+                    if (m.dev && hasDev(m.dev)) {
+                        deviants.push(current[di]);
+                        for (var dk in m.dev) {
+                            if (m.dev.hasOwnProperty(dk) && m.dev[dk] !== 0) devPropSeen[dk] = true;
+                        }
+                    }
+                }
+
+                if (deviants.length === 0) {
+                    alert("All selected items are already exact matches.\nNo changes needed.");
+                    return;
+                }
+
+                // Collect human-readable property names for confirmation
+                var propNameList = [];
+                for (var pk in devPropSeen) {
+                    if (devPropSeen.hasOwnProperty(pk)) propNameList.push(DEV_LABELS[pk] || pk);
+                }
+
+                // Confirmation dialog — UI only, no document writes here
+                var confirmDlg = new Window("dialog", "Confirm Merge");
+                confirmDlg.alignChildren = ["fill", "top"];
+                confirmDlg.margins = 18;
+                confirmDlg.spacing = 10;
+                confirmDlg.preferredSize.width = 340;
+                var sumLine1 = confirmDlg.add("statictext", undefined,
+                    deviants.length + " deviant(s) will be normalised on:", { multiline: true });
+                sumLine1.preferredSize.width = 300;
+                var sumLine2 = confirmDlg.add("statictext", undefined,
+                    propNameList.join(", "), { multiline: true });
+                sumLine2.preferredSize.width = 300;
+                var confirmBtns = confirmDlg.add("group");
+                confirmBtns.alignment = "right";
+                confirmBtns.spacing = 8;
+                var okBtn     = confirmBtns.add("button", undefined, "Merge");
+                var cancelBtn = confirmBtns.add("button", undefined, "Cancel");
+                var confirmed = false;
+                okBtn.onClick     = function () { confirmed = true;  confirmDlg.close(); };
+                cancelBtn.onClick = function () { confirmed = false; confirmDlg.close(); };
+                confirmDlg.show();
+
+                if (!confirmed) return;
+
+                // Store deviants for the while loop to write — then close
+                pendingMerge = deviants;
+                subset       = current;
+                action       = "merge";
+                listDlg.close();
+            };
+
+            closeBtn.onClick = function () {
+                action = "close";
+                listDlg.close();
+            };
+
+            listDlg.show();
+
+            if (action === "navigate") {
+                // Engine context — navigation works here
+                navFn(matches[subset[subsetCursor]].ref);
+            } else if (action === "merge") {
+                // Engine context — document writes work here
+                for (var mi = 0; mi < pendingMerge.length; mi++) {
+                    mergeFn(matches[pendingMerge[mi]]);
+                }
+                pendingMerge = [];
+                // Loop continues — entryStrings rebuilt at top with updated entries
+            } else {
+                keepGoing = false;
+            }
+        }
+    }
+
+    // ── Mode detection ───────────────────────────────────────────────────────
+
+    var TEXT_TYPES = {
+        "InsertionPoint": true, "Text": true, "Character": true,
+        "Word": true, "Line": true, "Paragraph": true, "TextStyleRange": true
+    };
+    var typeName   = s0.constructor ? s0.constructor.name : "";
+    var inTextMode = !!TEXT_TYPES[typeName];
+
+    // ── ScriptUI helpers ─────────────────────────────────────────────────────
+
+    function addSection(parent, title) {
+        var p = parent.add("panel", undefined, title);
+        p.alignChildren = ["left", "top"];
+        p.margins = [10, 15, 10, 10];
+        p.spacing = 8;
+        p.alignment = ["fill", "top"];
+        return p;
+    }
+
+    function addRow(parent, label, value) {
+        var g = parent.add("group");
+        g.alignChildren = ["left", "top"];
+        g.spacing = 8;
+        var lbl = g.add("statictext", undefined, label, { multiline: true });
+        lbl.preferredSize.width = 130;
+        lbl.justify = "right";
+        var val = g.add("statictext", undefined, String(value), { multiline: true });
+        val.preferredSize.width = 220;
+    }
+
+    function addCheckRow(parent, label) {
+        var g = parent.add("group");
+        g.alignChildren = ["left", "center"];
+        g.spacing = 8;
+        var cb = g.add("checkbox", undefined, label);
+        cb.value = false;
+        return cb;
+    }
+
+    function addToleranceRow(parent, label, unit) {
+        var g = parent.add("group");
+        g.alignChildren = ["left", "center"];
+        g.spacing = 8;
+        var cb = g.add("checkbox", undefined, label);
+        cb.preferredSize.width = 240;
+        g.add("statictext", undefined, "\u00b1");
+        var tol = g.add("edittext", undefined, "0");
+        tol.preferredSize.width = 46;
+        g.add("statictext", undefined, unit);
+        return { cb: cb, tol: tol };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // TEXT MODE
+    // ══════════════════════════════════════════════════════════════════════════
+
+    if (inTextMode) {
+
+        var para;
+        try { para = (typeName === "Paragraph") ? s0 : s0.paragraphs[0]; } catch (e) {}
+        if (!para || !para.isValid) { alert("Could not resolve paragraph."); return; }
+
+        var paraStyleRaw = safeStr(function () { return para.appliedParagraphStyle.name; });
+        var fontSizeRaw  = safeStr(function () { return roundTo(para.pointSize, 2); });
+        var leadingRaw   = safeStr(function () { return roundTo(para.leading,   2); });
+        var trackingRaw  = safeStr(function () { return para.tracking; });
+        var charStyles   = getCharStylesInPara(para);
+
+        var dlg = new Window("dialog", "Selection Inspector");
+        dlg.alignChildren = ["fill", "top"];
+        dlg.margins = 18;
+        dlg.spacing = 12;
+        dlg.preferredSize.width = 420;
+
+        var infoSec = addSection(dlg, "Paragraph");
+        addRow(infoSec, "Paragraph Style:",    paraStyleRaw);
+        addRow(infoSec, "Character Style(s):", charStyles);
+        addRow(infoSec, "Font Size:",          fontSizeRaw + " pt");
+        addRow(infoSec, "Leading:",            leadingRaw  + " pt");
+        addRow(infoSec, "Tracking:",           trackingRaw);
+
+        var propSec = addSection(dlg, "Match Properties");
+        var cbParaStyle = addCheckRow(propSec,     "Paragraph Style  (" + paraStyleRaw + ")");
+        var rFontSize   = addToleranceRow(propSec, "Font Size  ("  + fontSizeRaw + " pt)", "pt");
+        var rLeading    = addToleranceRow(propSec, "Leading  ("    + leadingRaw  + " pt)", "pt");
+        var rTracking   = addToleranceRow(propSec, "Tracking  ("   + trackingRaw + ")",    "u");
+        var cbFontSize  = rFontSize.cb; var tolFontSize = rFontSize.tol;
+        var cbLeading   = rLeading.cb;  var tolLeading  = rLeading.tol;
+        var cbTracking  = rTracking.cb; var tolTracking = rTracking.tol;
+
+        var btnGrp = dlg.add("group");
+        btnGrp.alignment = "right";
+        btnGrp.spacing = 8;
+        var matchBtn = btnGrp.add("button", undefined, "Match");
+        btnGrp.add("button", undefined, "Close", { name: "cancel" });
+
+        var matchRequested = false;
+        matchBtn.onClick = function () {
+            if (!cbParaStyle.value && !cbFontSize.value && !cbLeading.value && !cbTracking.value) {
+                alert("Please select at least one property to match against.");
+                return;
+            }
+            matchRequested = true;
+            dlg.close(1);
+        };
+
+        dlg.show();
+        if (!matchRequested) return;
+
+        var tfTolV = parseFloat(tolFontSize.text) || 0;
+        var ldTolV = parseFloat(tolLeading.text)  || 0;
+        var trTolV = parseFloat(tolTracking.text) || 0;
+
+        var activeProps = [];
+        if (cbParaStyle.value) activeProps.push("Style: " + paraStyleRaw);
+        if (cbFontSize.value)  activeProps.push(tfTolV > 0
+            ? "Size: " + fontSizeRaw + " pt \u00b1 " + tfTolV + " pt \u2192 " + roundTo(parseFloat(fontSizeRaw) - tfTolV, 2) + "\u2013" + roundTo(parseFloat(fontSizeRaw) + tfTolV, 2) + " pt"
+            : "Size: " + fontSizeRaw + " pt");
+        if (cbLeading.value)   activeProps.push(ldTolV > 0
+            ? "Leading: " + leadingRaw + " pt \u00b1 " + ldTolV + " pt \u2192 " + roundTo(parseFloat(leadingRaw) - ldTolV, 2) + "\u2013" + roundTo(parseFloat(leadingRaw) + ldTolV, 2) + " pt"
+            : "Leading: " + leadingRaw + " pt");
+        if (cbTracking.value)  activeProps.push(trTolV > 0
+            ? "Tracking: " + trackingRaw + " \u00b1 " + trTolV + " \u2192 " + roundTo(parseFloat(trackingRaw) - trTolV, 2) + "\u2013" + roundTo(parseFloat(trackingRaw) + trTolV, 2)
+            : "Tracking: " + trackingRaw);
+
+        function paraMatchesFilters(tp) {
+            try {
+                if (!tp || !tp.isValid) return null;
+                if (cbParaStyle.value && tp.appliedParagraphStyle.name !== paraStyleRaw) return null;
+                var dev = {};
+                if (cbFontSize.value) {
+                    var d = roundTo(tp.pointSize, 2) - parseFloat(fontSizeRaw);
+                    if (Math.abs(d) > tfTolV) return null;
+                    dev.fontSize = roundTo(d, 2);
+                }
+                if (cbLeading.value) {
+                    var d2 = roundTo(tp.leading, 2) - parseFloat(leadingRaw);
+                    if (Math.abs(d2) > ldTolV) return null;
+                    dev.leading = roundTo(d2, 2);
+                }
+                if (cbTracking.value) {
+                    var d3 = tp.tracking - parseFloat(trackingRaw);
+                    if (Math.abs(d3) > trTolV) return null;
+                    dev.tracking = roundTo(d3, 2);
+                }
+                // Passive style observation — flag if style differs but wasn't a filter
+                if (!cbParaStyle.value) {
+                    try {
+                        var candStyle = tp.appliedParagraphStyle.name;
+                        if (candStyle !== paraStyleRaw) dev.styleDeviation = candStyle;
+                    } catch (e) {}
+                }
+                return dev;
+            } catch (e) { return null; }
+        }
+
+        // Merge function: writes target values back to deviating properties
+        function textMergeFn(match) {
+            try {
+                var tp = match.ref;
+                if (!tp || !tp.isValid) return;
+                if (match.dev.fontSize       !== undefined && match.dev.fontSize       !== 0)  { tp.pointSize = parseFloat(fontSizeRaw); match.dev.fontSize  = 0; }
+                if (match.dev.leading        !== undefined && match.dev.leading        !== 0)  { tp.leading   = parseFloat(leadingRaw);  match.dev.leading   = 0; }
+                if (match.dev.tracking       !== undefined && match.dev.tracking       !== 0)  { tp.tracking  = parseFloat(trackingRaw); match.dev.tracking  = 0; }
+                if (match.dev.styleDeviation !== undefined && match.dev.styleDeviation !== "") {
+                    var targetStyle = null;
+                    var allPS = doc.allParagraphStyles;
+                    for (var si = 0; si < allPS.length; si++) {
+                        if (allPS[si].name === paraStyleRaw) { targetStyle = allPS[si]; break; }
+                    }
+                    if (targetStyle && targetStyle.isValid) {
+                        tp.applyParagraphStyle(targetStyle, false);
+                        match.dev.styleDeviation = "";
+                    }
+                }
+                match.entry = match.baseEntry + buildDevFlag(match.dev);
+            } catch (e) {}
+        }
+
+        var matches = [];
+        try {
+            var stories = doc.stories;
+            for (var si = 0; si < stories.length; si++) {
+                try {
+                    var paras = stories[si].paragraphs;
+                    for (var pi = 0; pi < paras.length; pi++) {
+                        try {
+                            var tp = paras[pi];
+                            var dev = paraMatchesFilters(tp);
+                            if (!dev) continue;
+                            var baseE = "p." + getParaPage(tp) + "  \u2014  \"" + trunc(tp.contents, 40) + "\"";
+                            matches.push({
+                                ref: tp, baseEntry: baseE,
+                                entry: baseE + buildDevFlag(dev),
+                                dev: dev, props: activeProps
+                            });
+                        } catch (e) {}
+                    }
+                    var tables = stories[si].tables;
+                    for (var ti = 0; ti < tables.length; ti++) {
+                        try {
+                            var rows = tables[ti].rows;
+                            for (var ri = 0; ri < rows.length; ri++) {
+                                try {
+                                    var cells = rows[ri].cells;
+                                    for (var ci = 0; ci < cells.length; ci++) {
+                                        try {
+                                            var cellParas = cells[ci].paragraphs;
+                                            for (var cpi = 0; cpi < cellParas.length; cpi++) {
+                                                try {
+                                                    var cp   = cellParas[cpi];
+                                                    var devC = paraMatchesFilters(cp);
+                                                    if (!devC) continue;
+                                                    var baseCE = "p." + getParaPage(cp) + "  \u2014  [Table]  \"" + trunc(cp.contents, 35) + "\"";
+                                                    matches.push({
+                                                        ref: cp, baseEntry: baseCE,
+                                                        entry: baseCE + buildDevFlag(devC),
+                                                        dev: devC, props: activeProps
+                                                    });
+                                                } catch (e) {}
+                                            }
+                                        } catch (e) {}
+                                    }
+                                } catch (e) {}
+                            }
+                        } catch (e) {}
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+
+        if (matches.length === 0) { alert("No matching paragraphs found."); return; }
+
+        app.doScript(
+            function () { runStepThrough(matches, navToPara, "paragraphs", textMergeFn); },
+            ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Selection Inspector"
+        );
+        return;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // CELL MODE
+    // ══════════════════════════════════════════════════════════════════════════
+
+    if (typeName === "Cell") {
+
+        var cell = s0;
+
+        var cellStyleRaw  = safeStr(function () { return cell.appliedCellStyle.name; });
+        var cellHRaw      = safeStr(function () { return roundTo(cell.height, 3); });
+        var cellWRaw      = safeStr(function () { return roundTo(cell.width,  3); });
+        var cellTopRaw    = safeStr(function () { return roundTo(cell.topInset,    3); });
+        var cellLeftRaw   = safeStr(function () { return roundTo(cell.leftInset,   3); });
+        var cellRightRaw  = safeStr(function () { return roundTo(cell.rightInset,  3); });
+        var cellBotRaw    = safeStr(function () { return roundTo(cell.bottomInset, 3); });
+        var cellInsetsStr = "Top: " + cellTopRaw + "  Left: " + cellLeftRaw +
+                            "  Right: " + cellRightRaw + "  Bottom: " + cellBotRaw;
+
+        var parentTableId  = -1;
+        var parentTblStyle = "\u2014";
+        var parentTblRows  = "\u2014";
+        var parentTblCols  = "\u2014";
+        try {
+            var pt = cell.parent;
+            parentTableId  = pt.id;
+            parentTblStyle = pt.appliedTableStyle.name;
+            parentTblRows  = String(pt.rows.length);
+            parentTblCols  = String(pt.columns.length);
+        } catch (e) {}
+
+        var dlgC = new Window("dialog", "Selection Inspector");
+        dlgC.alignChildren = ["fill", "top"];
+        dlgC.margins = 18;
+        dlgC.spacing = 12;
+        dlgC.preferredSize.width = 420;
+
+        var cellInfoSec = addSection(dlgC, "Cell");
+        addRow(cellInfoSec, "Cell Style:", cellStyleRaw);
+        addRow(cellInfoSec, "Height:",     cellHRaw + " pt");
+        addRow(cellInfoSec, "Width:",      cellWRaw + " pt");
+        addRow(cellInfoSec, "Insets:",     cellInsetsStr);
+
+        var tblInfoSec = addSection(dlgC, "Parent Table");
+        addRow(tblInfoSec, "Table Style:", parentTblStyle);
+        addRow(tblInfoSec, "Rows:",        parentTblRows);
+        addRow(tblInfoSec, "Columns:",     parentTblCols);
+
+        var cellPropSec  = addSection(dlgC, "Match Properties");
+        var cbCellStyle  = addCheckRow(cellPropSec,     "Cell Style  (" + cellStyleRaw + ")");
+        var rCellH       = addToleranceRow(cellPropSec, "Height  (" + cellHRaw + " pt)", "pt");
+        var rCellW       = addToleranceRow(cellPropSec, "Width  ("  + cellWRaw + " pt)", "pt");
+        var cbCellInsets = addCheckRow(cellPropSec,     "Insets  [" + cellInsetsStr + "]");
+        var cbCellH = rCellH.cb; var tolCellH = rCellH.tol;
+        var cbCellW = rCellW.cb; var tolCellW = rCellW.tol;
+
+        var btnGrpC = dlgC.add("group");
+        btnGrpC.alignment = "right";
+        btnGrpC.spacing = 8;
+        var matchBtnC = btnGrpC.add("button", undefined, "Match");
+        btnGrpC.add("button", undefined, "Close", { name: "cancel" });
+
+        var matchRequestedC = false;
+        matchBtnC.onClick = function () {
+            if (!cbCellStyle.value && !cbCellH.value && !cbCellW.value && !cbCellInsets.value) {
+                alert("Please select at least one property to match against.");
+                return;
+            }
+            matchRequestedC = true;
+            dlgC.close(1);
+        };
+
+        dlgC.show();
+        if (!matchRequestedC) return;
+
+        var chTolV = parseFloat(tolCellH.text) || 0;
+        var cwTolV = parseFloat(tolCellW.text) || 0;
+
+        var activePropsC = [];
+        if (cbCellStyle.value)  activePropsC.push("Cell Style: " + cellStyleRaw);
+        if (cbCellH.value)      activePropsC.push(chTolV > 0
+            ? "Height: " + cellHRaw + " pt \u00b1 " + chTolV + " pt \u2192 " + roundTo(parseFloat(cellHRaw) - chTolV, 2) + "\u2013" + roundTo(parseFloat(cellHRaw) + chTolV, 2) + " pt"
+            : "Height: " + cellHRaw + " pt");
+        if (cbCellW.value)      activePropsC.push(cwTolV > 0
+            ? "Width: " + cellWRaw + " pt \u00b1 " + cwTolV + " pt \u2192 " + roundTo(parseFloat(cellWRaw) - cwTolV, 2) + "\u2013" + roundTo(parseFloat(cellWRaw) + cwTolV, 2) + " pt"
+            : "Width: " + cellWRaw + " pt");
+        if (cbCellInsets.value) activePropsC.push("Insets: [" + cellInsetsStr + "]");
+
+        // Merge function for cell mode
+        function cellMergeFn(match) {
+            try {
+                var cand = match.ref;
+                if (!cand || !cand.isValid) return;
+                if (match.dev.cellHeight     !== undefined && match.dev.cellHeight     !== 0)  { cand.height = parseFloat(cellHRaw); match.dev.cellHeight = 0; }
+                if (match.dev.cellWidth      !== undefined && match.dev.cellWidth      !== 0)  { cand.width  = parseFloat(cellWRaw); match.dev.cellWidth  = 0; }
+                if (match.dev.styleDeviation !== undefined && match.dev.styleDeviation !== "") {
+                    var targetCS = null;
+                    var allCS = doc.allCellStyles;
+                    for (var csi = 0; csi < allCS.length; csi++) {
+                        if (allCS[csi].name === cellStyleRaw) { targetCS = allCS[csi]; break; }
+                    }
+                    if (targetCS && targetCS.isValid) {
+                        cand.appliedCellStyle = targetCS;
+                        match.dev.styleDeviation = "";
+                    }
+                }
+                match.entry = match.baseEntry + buildDevFlag(match.dev);
+            } catch (e) {}
+        }
+
+        var matchesC = [];
+        try {
+            var storiesC = doc.stories;
+            for (var sci = 0; sci < storiesC.length; sci++) {
+                try {
+                    var tablesC = storiesC[sci].tables;
+                    for (var tci = 0; tci < tablesC.length; tci++) {
+                        try {
+                            var tblC   = tablesC[tci];
+                            var isSame = (tblC.id === parentTableId);
+                            var rowsC  = tblC.rows;
+                            for (var rci = 0; rci < rowsC.length; rci++) {
+                                try {
+                                    var cellsC = rowsC[rci].cells;
+                                    for (var cci = 0; cci < cellsC.length; cci++) {
+                                        try {
+                                            var cand = cellsC[cci];
+                                            if (!cand.isValid) continue;
+                                            if (cbCellStyle.value && cand.appliedCellStyle.name !== cellStyleRaw) continue;
+                                            var devCH = 0, devCW = 0;
+                                            if (cbCellH.value) {
+                                                devCH = roundTo(cand.height - parseFloat(cellHRaw), 2);
+                                                if (Math.abs(devCH) > chTolV) continue;
+                                            }
+                                            if (cbCellW.value) {
+                                                devCW = roundTo(cand.width - parseFloat(cellWRaw), 2);
+                                                if (Math.abs(devCW) > cwTolV) continue;
+                                            }
+                                            if (cbCellInsets.value) {
+                                                if (roundTo(cand.topInset,    3) !== parseFloat(cellTopRaw))   continue;
+                                                if (roundTo(cand.leftInset,   3) !== parseFloat(cellLeftRaw))  continue;
+                                                if (roundTo(cand.rightInset,  3) !== parseFloat(cellRightRaw)) continue;
+                                                if (roundTo(cand.bottomInset, 3) !== parseFloat(cellBotRaw))   continue;
+                                            }
+                                            var devCObj = {};
+                                            if (cbCellH.value) devCObj.cellHeight = devCH;
+                                            if (cbCellW.value) devCObj.cellWidth  = devCW;
+                                            // Passive cell style observation
+                                            if (!cbCellStyle.value) {
+                                                try {
+                                                    var candCStyle = cand.appliedCellStyle.name;
+                                                    if (candCStyle !== cellStyleRaw) devCObj.styleDeviation = candCStyle;
+                                                } catch (e) {}
+                                            }
+                                            var sameTag   = isSame ? "  [Same table]" : "";
+                                            var pageNameC = getTablePage(tblC);
+                                            var baseCE    = "p." + pageNameC + sameTag + "  \u2014  row " + (rci + 1) + ", col " + (cci + 1);
+                                            matchesC.push({
+                                                ref: cand, baseEntry: baseCE,
+                                                entry: baseCE + buildDevFlag(devCObj),
+                                                dev: devCObj, props: activePropsC
+                                            });
+                                        } catch (e) {}
+                                    }
+                                } catch (e) {}
+                            }
+                        } catch (e) {}
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+
+        if (matchesC.length === 0) { alert("No matching cells found."); return; }
+
+        app.doScript(
+            function () { runStepThrough(matchesC, navToCell, "cells", cellMergeFn); },
+            ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Selection Inspector"
+        );
+        return;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // TABLE MODE
+    // ══════════════════════════════════════════════════════════════════════════
+
+    if (typeName === "Table") {
+
+        var table = s0;
+
+        var tblStyleRaw = safeStr(function () { return table.appliedTableStyle.name; });
+        var tblRowsRaw  = safeStr(function () { return table.rows.length; });
+        var tblColsRaw  = safeStr(function () { return table.columns.length; });
+
+        var dlgT = new Window("dialog", "Selection Inspector");
+        dlgT.alignChildren = ["fill", "top"];
+        dlgT.margins = 18;
+        dlgT.spacing = 12;
+        dlgT.preferredSize.width = 420;
+
+        var tblInfoSecT = addSection(dlgT, "Table");
+        addRow(tblInfoSecT, "Table Style:", tblStyleRaw);
+        addRow(tblInfoSecT, "Rows:",        tblRowsRaw);
+        addRow(tblInfoSecT, "Columns:",     tblColsRaw);
+
+        var tblPropSec = addSection(dlgT, "Match Properties");
+        var cbTblStyle = addCheckRow(tblPropSec, "Table Style  (" + tblStyleRaw + ")");
+        var cbTblRows  = addCheckRow(tblPropSec, "Rows  ("  + tblRowsRaw + ")");
+        var cbTblCols  = addCheckRow(tblPropSec, "Columns  (" + tblColsRaw + ")");
+
+        var btnGrpT = dlgT.add("group");
+        btnGrpT.alignment = "right";
+        btnGrpT.spacing = 8;
+        var matchBtnT = btnGrpT.add("button", undefined, "Match");
+        btnGrpT.add("button", undefined, "Close", { name: "cancel" });
+
+        var matchRequestedT = false;
+        matchBtnT.onClick = function () {
+            if (!cbTblStyle.value && !cbTblRows.value && !cbTblCols.value) {
+                alert("Please select at least one property to match against.");
+                return;
+            }
+            matchRequestedT = true;
+            dlgT.close(1);
+        };
+
+        dlgT.show();
+        if (!matchRequestedT) return;
+
+        var activePropsT = [];
+        if (cbTblStyle.value) activePropsT.push("Table Style: " + tblStyleRaw);
+        if (cbTblRows.value)  activePropsT.push("Rows: "        + tblRowsRaw);
+        if (cbTblCols.value)  activePropsT.push("Columns: "     + tblColsRaw);
+
+        var matchesT = [];
+        try {
+            var storiesT = doc.stories;
+            for (var sti = 0; sti < storiesT.length; sti++) {
+                try {
+                    var tablesT = storiesT[sti].tables;
+                    for (var tti = 0; tti < tablesT.length; tti++) {
+                        try {
+                            var tblT = tablesT[tti];
+                            if (!tblT.isValid) continue;
+                            if (cbTblStyle.value && tblT.appliedTableStyle.name !== tblStyleRaw) continue;
+                            if (cbTblRows.value  && String(tblT.rows.length)    !== tblRowsRaw)  continue;
+                            if (cbTblCols.value  && String(tblT.columns.length) !== tblColsRaw)  continue;
+                            var baseTbE = "p." + getTablePage(tblT) + "  \u2014  " + tblT.rows.length + "\u00d7" + tblT.columns.length + "  [" + tblT.appliedTableStyle.name + "]";
+                            var devTbl = {};
+                            // Passive table style observation
+                            if (!cbTblStyle.value) {
+                                try {
+                                    var candTStyle = tblT.appliedTableStyle.name;
+                                    if (candTStyle !== tblStyleRaw) devTbl.styleDeviation = candTStyle;
+                                } catch (e) {}
+                            }
+                            matchesT.push({
+                                ref: tblT, baseEntry: baseTbE,
+                                entry: baseTbE + buildDevFlag(devTbl),
+                                dev: devTbl, props: activePropsT
+                            });
+                        } catch (e) {}
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+
+        if (matchesT.length === 0) { alert("No matching tables found."); return; }
+
+        // Merge function for table mode — normalises table style deviation
+        function tableMergeFn(match) {
+            try {
+                var tblT = match.ref;
+                if (!tblT || !tblT.isValid) return;
+                if (match.dev.styleDeviation !== undefined && match.dev.styleDeviation !== "") {
+                    var targetTS = null;
+                    var allTS = doc.allTableStyles;
+                    for (var tsi = 0; tsi < allTS.length; tsi++) {
+                        if (allTS[tsi].name === tblStyleRaw) { targetTS = allTS[tsi]; break; }
+                    }
+                    if (targetTS && targetTS.isValid) {
+                        tblT.appliedTableStyle = targetTS;
+                        match.dev.styleDeviation = "";
+                    }
+                }
+                match.entry = match.baseEntry + buildDevFlag(match.dev);
+            } catch (e) {}
+        }
+
+        app.doScript(
+            function () { runStepThrough(matchesT, navToTable, "tables", tableMergeFn); },
+            ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Selection Inspector"
+        );
+        return;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // FRAME MODE
+    // ══════════════════════════════════════════════════════════════════════════
+
+    var frame     = s0;
+    var frameType = safeStr(function () { return frame.constructor.name; });
+    var objStyle  = safeStr(function () { return frame.appliedObjectStyle.name; });
+
+    var rawW = null, rawH = null;
+    var w = "\u2014", h = "\u2014";
+    try {
+        var b = frame.geometricBounds;
+        rawW = roundTo(b[3] - b[1], 3);
+        rawH = roundTo(b[2] - b[0], 3);
+        w = rawW + " pt";
+        h = rawH + " pt";
+    } catch (e) {}
+
+    var rawBaselineOffset    = null;
+    var rawBaselineOffsetStr = "\u2014";
+    var rawBaselineMin       = null;
+    var rawBaselineMinStr    = "\u2014";
+    try {
+        var tfp = frame.textFramePreferences;
+        rawBaselineOffset    = tfp.firstBaselineOffset;
+        rawBaselineOffsetStr = baselineOffsetName(rawBaselineOffset);
+        rawBaselineMin       = roundTo(tfp.minimumFirstBaselineOffset, 3);
+        rawBaselineMinStr    = rawBaselineMin + " pt";
+    } catch (e) {}
+
+    var dlg2 = new Window("dialog", "Selection Inspector");
+    dlg2.alignChildren = ["fill", "top"];
+    dlg2.margins = 18;
+    dlg2.spacing = 12;
+    dlg2.preferredSize.width = 420;
+
+    var infoSec2 = addSection(dlg2, "Frame");
+    addRow(infoSec2, "Frame Type:",            frameType);
+    addRow(infoSec2, "Object Style:",          objStyle);
+    addRow(infoSec2, "Width:",                 w);
+    addRow(infoSec2, "Height:",                h);
+    addRow(infoSec2, "Baseline Offset:",       rawBaselineOffsetStr);
+    addRow(infoSec2, "Baseline Minimum:",      rawBaselineMinStr);
+
+    var propSec2      = addSection(dlg2, "Match Properties");
+    var cbObjStyle    = addCheckRow(propSec2,     "Object Style  (" + objStyle + ")");
+    var rWidth        = addToleranceRow(propSec2, "Width  ("  + w + ")", "pt");
+    var rHeight       = addToleranceRow(propSec2, "Height  (" + h + ")", "pt");
+    var cbBaselineOff = addCheckRow(propSec2,     "Baseline Offset  (" + rawBaselineOffsetStr + ")");
+    var rBaselineMin  = addToleranceRow(propSec2, "Baseline Minimum  (" + rawBaselineMinStr + ")", "pt");
+    var cbWidth    = rWidth.cb;  var tolWidth  = rWidth.tol;
+    var cbHeight   = rHeight.cb; var tolHeight = rHeight.tol;
+    var cbBaselineMin = rBaselineMin.cb; var tolBaselineMin = rBaselineMin.tol;
+
+    // Disable baseline checkboxes if values were not accessible on this frame
+    cbBaselineOff.enabled = (rawBaselineOffset !== null);
+    cbBaselineMin.enabled = (rawBaselineMin    !== null);
+
+    var btnGrp2 = dlg2.add("group");
+    btnGrp2.alignment = "right";
+    btnGrp2.spacing = 8;
+    var matchBtn2 = btnGrp2.add("button", undefined, "Match");
+    btnGrp2.add("button", undefined, "Close", { name: "cancel" });
+
+    var matchRequested2 = false;
+    matchBtn2.onClick = function () {
+        if (!cbObjStyle.value && !cbWidth.value && !cbHeight.value &&
+            !cbBaselineOff.value && !cbBaselineMin.value) {
+            alert("Please select at least one property to match against.");
+            return;
+        }
+        matchRequested2 = true;
+        dlg2.close(1);
+    };
+
+    dlg2.show();
+    if (!matchRequested2) return;
+
+    var wTolV      = parseFloat(tolWidth.text)       || 0;
+    var hTolV      = parseFloat(tolHeight.text)      || 0;
+    var bmTolV     = parseFloat(tolBaselineMin.text) || 0;
+
+    var activeProps2 = [];
+    if (cbObjStyle.value)    activeProps2.push("Object Style: " + objStyle);
+    if (cbWidth.value)       activeProps2.push(wTolV > 0
+        ? "Width: " + w + " \u00b1 " + wTolV + " pt \u2192 " + roundTo(rawW - wTolV, 2) + "\u2013" + roundTo(rawW + wTolV, 2) + " pt"
+        : "Width: " + w);
+    if (cbHeight.value)      activeProps2.push(hTolV > 0
+        ? "Height: " + h + " \u00b1 " + hTolV + " pt \u2192 " + roundTo(rawH - hTolV, 2) + "\u2013" + roundTo(rawH + hTolV, 2) + " pt"
+        : "Height: " + h);
+    if (cbBaselineOff.value) activeProps2.push("Baseline Offset: " + rawBaselineOffsetStr);
+    if (cbBaselineMin.value) activeProps2.push(bmTolV > 0
+        ? "Baseline Minimum: " + rawBaselineMinStr + " \u00b1 " + bmTolV + " pt \u2192 " + roundTo(rawBaselineMin - bmTolV, 2) + "\u2013" + roundTo(rawBaselineMin + bmTolV, 2) + " pt"
+        : "Baseline Minimum: " + rawBaselineMinStr);
+
+    // Merge function for frame mode — adjusts geometricBounds to target dimensions
+    function frameMergeFn(match) {
+        try {
+            var item = match.ref;
+            if (!item || !item.isValid) return;
+            var bnds = item.geometricBounds;
+            if (match.dev.width  !== undefined && match.dev.width  !== 0) {
+                bnds = item.geometricBounds;
+                item.geometricBounds = [bnds[0], bnds[1], bnds[2], bnds[1] + rawW];
+                match.dev.width = 0;
+            }
+            if (match.dev.height !== undefined && match.dev.height !== 0) {
+                bnds = item.geometricBounds;
+                item.geometricBounds = [bnds[0], bnds[1], bnds[0] + rawH, bnds[3]];
+                match.dev.height = 0;
+            }
+            if (match.dev.styleDeviation !== undefined && match.dev.styleDeviation !== "") {
+                var targetOS = null;
+                var allOS = doc.allObjectStyles;
+                for (var osi = 0; osi < allOS.length; osi++) {
+                    if (allOS[osi].name === objStyle) { targetOS = allOS[osi]; break; }
+                }
+                if (targetOS && targetOS.isValid) {
+                    item.appliedObjectStyle = targetOS;
+                    match.dev.styleDeviation = "";
+                }
+            }
+            match.entry = match.baseEntry + buildDevFlag(match.dev);
+        } catch (e) {}
+    }
+
+    var matches2 = [];
+    try {
+        var allItems = doc.allPageItems;
+        for (var ii = 0; ii < allItems.length; ii++) {
+            try {
+                var item = allItems[ii];
+                if (!item.isValid) continue;
+                if (cbObjStyle.value && item.appliedObjectStyle.name !== objStyle) continue;
+                var iw = 0, ih = 0;
+                if (cbWidth.value || cbHeight.value) {
+                    var ib = item.geometricBounds;
+                    iw = roundTo(ib[3] - ib[1], 3);
+                    ih = roundTo(ib[2] - ib[0], 3);
+                    if (cbWidth.value  && Math.abs(iw - rawW) > wTolV) continue;
+                    if (cbHeight.value && Math.abs(ih - rawH) > hTolV) continue;
+                }
+                // Baseline exact-match filters
+                if (cbBaselineOff.value && rawBaselineOffset !== null) {
+                    try { if (item.textFramePreferences.firstBaselineOffset !== rawBaselineOffset) continue; }
+                    catch (e) { continue; }
+                }
+                if (cbBaselineMin.value && rawBaselineMin !== null) {
+                    try { if (Math.abs(roundTo(item.textFramePreferences.minimumFirstBaselineOffset, 3) - rawBaselineMin) > bmTolV) continue; }
+                    catch (e) { continue; }
+                }
+                var devF = {};
+                if (cbWidth.value)  devF.width  = roundTo(iw - rawW, 2);
+                if (cbHeight.value) devF.height = roundTo(ih - rawH, 2);
+                // Passive object style observation
+                if (!cbObjStyle.value) {
+                    try {
+                        var candOStyle = item.appliedObjectStyle.name;
+                        if (candOStyle !== objStyle) devF.styleDeviation = candOStyle;
+                    } catch (e) {}
+                }
+                var itemType  = item.constructor ? item.constructor.name : "Frame";
+                var itemStyle = safeStr(function () { return item.appliedObjectStyle.name; });
+                var baseFE    = "p." + getItemPage(item) + "  \u2014  " + itemType + " [" + itemStyle + "]";
+                matches2.push({
+                    ref: item, baseEntry: baseFE,
+                    entry: baseFE + buildDevFlag(devF),
+                    dev: devF, props: activeProps2
+                });
+            } catch (e) {}
+        }
+    } catch (e) {}
+
+    if (matches2.length === 0) { alert("No matching frames found."); return; }
+
+    app.doScript(
+        function () { runStepThrough(matches2, navToItem, "frames", frameMergeFn); },
+        ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Selection Inspector"
+    );
+
+})();
