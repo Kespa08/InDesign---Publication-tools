@@ -892,9 +892,23 @@
             return grid;
         }
 
-        var tblRefHdrStyles = buildStyleGrid(table.headerRows);
-        var tblRefBdyStyles = buildStyleGrid(table.bodyRows);
-        var tblRefFtrStyles = buildStyleGrid(table.footerRows);
+        // InDesign's DOM exposes only row COUNT properties (headerRowCount etc.),
+        // not separate row collections. Slice table.rows by index range instead.
+        function rowSlice(allRows, start, count) {
+            var arr = [];
+            try {
+                for (var rsi = start; rsi < start + count; rsi++) arr.push(allRows[rsi]);
+            } catch (e) {}
+            return arr;
+        }
+
+        var refHdrN = parseInt(tblHdrRowsRaw) || 0;
+        var refBdyN = parseInt(tblBdyRowsRaw) || 0;
+        var refFtrN = parseInt(tblFtrRowsRaw) || 0;
+
+        var tblRefHdrStyles = buildStyleGrid(rowSlice(table.rows, 0, refHdrN));
+        var tblRefBdyStyles = buildStyleGrid(rowSlice(table.rows, refHdrN, refBdyN));
+        var tblRefFtrStyles = buildStyleGrid(rowSlice(table.rows, refHdrN + refBdyN, refFtrN));
         var tblRefHdrCount  = tblRefHdrStyles.length;
         var tblRefBdyCount  = tblRefBdyStyles.length;
         var tblRefFtrCount  = tblRefFtrStyles.length;
@@ -1052,7 +1066,7 @@
                                 // Header rows — only compare rows that exist in both T_M and T_x
                                 if (tblRefHdrCount > 0 && hdrC > 0) {
                                     try {
-                                        var hdrRows = tblT.headerRows;
+                                        var hdrRows = rowSlice(tblT.rows, 0, hdrC);
                                         var hGRows = tblRefHdrStyles.length;
                                         var hGCols = tblRefHdrStyles[0].length || 1;
                                         for (var hri = 0; hri < hdrRows.length; hri++) {
@@ -1068,7 +1082,7 @@
                                 }
                                 // Body rows
                                 try {
-                                    var bdyRows = tblT.bodyRows;
+                                    var bdyRows = rowSlice(tblT.rows, hdrC, bdyC);
                                     var bGRows = tblRefBdyStyles.length;
                                     var bGCols = tblRefBdyStyles[0].length || 1;
                                     for (var bri = 0; bri < bdyRows.length; bri++) {
@@ -1084,7 +1098,7 @@
                                 // Footer rows — only compare if both T_M and T_x have footers
                                 if (tblRefFtrCount > 0 && ftrC > 0) {
                                     try {
-                                        var ftrRows = tblT.footerRows;
+                                        var ftrRows = rowSlice(tblT.rows, hdrC + bdyC, ftrC);
                                         var fGRows = tblRefFtrStyles.length;
                                         var fGCols = tblRefFtrStyles[0].length || 1;
                                         for (var fri = 0; fri < ftrRows.length; fri++) {
@@ -1157,6 +1171,12 @@
 
                 // 5. Apply cell-style tiling (header / body / footer independently)
                 if (cbCellStyles.value) {
+                    // Re-read row counts after structural changes (steps 1–3 may have added rows)
+                    var mHdrC = 0, mBdyC = 0, mFtrC = 0;
+                    try { mHdrC = tblT.headerRowCount; } catch (e) {}
+                    try { mBdyC = tblT.bodyRowCount;   } catch (e) {}
+                    try { mFtrC = tblT.footerRowCount; } catch (e) {}
+
                     var csLookup = {};
                     try {
                         var allCS = doc.allCellStyles;
@@ -1182,9 +1202,9 @@
                         } catch (e) {}
                     }
 
-                    if (tblRefHdrCount > 0) applyGridToRows(tblT.headerRows, tblRefHdrStyles);
-                    applyGridToRows(tblT.bodyRows, tblRefBdyStyles);
-                    if (tblRefFtrCount > 0) applyGridToRows(tblT.footerRows, tblRefFtrStyles);
+                    if (tblRefHdrCount > 0) applyGridToRows(rowSlice(tblT.rows, 0, mHdrC), tblRefHdrStyles);
+                    applyGridToRows(rowSlice(tblT.rows, mHdrC, mBdyC), tblRefBdyStyles);
+                    if (tblRefFtrCount > 0) applyGridToRows(rowSlice(tblT.rows, mHdrC + mBdyC, mFtrC), tblRefFtrStyles);
 
                     match.dev.cellStyleDevsCount = 0;
                 }
