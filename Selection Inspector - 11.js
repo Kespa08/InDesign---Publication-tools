@@ -127,6 +127,10 @@
             }
         }
         // String-valued passive style deviation — rendered with → rather than ±
+        if (dev.colCountDiff       !== undefined && dev.colCountDiff       !== 0) parts.push("col count "  + fmtDev(dev.colCountDiff));
+        if (dev.headerRowDiff      !== undefined && dev.headerRowDiff      !== 0) parts.push("hdr rows "   + fmtDev(dev.headerRowDiff));
+        if (dev.footerRowDiff      !== undefined && dev.footerRowDiff      !== 0) parts.push("ftr rows "   + fmtDev(dev.footerRowDiff));
+        if (dev.cellStyleDevsCount !== undefined && dev.cellStyleDevsCount !== 0) parts.push(dev.cellStyleDevsCount + " cell style(s)");
         if (dev.styleDeviation  !== undefined && dev.styleDeviation  !== "") parts.push("style \u2192 \"" + dev.styleDeviation + "\"");
         return parts.length ? "  [\u03b4 " + parts.join(", ") + "]" : "";
     }
@@ -155,8 +159,12 @@
         height:         "Height",
         cellWidth:      "Cell Width",
         cellHeight:     "Cell Height",
-        colWidths:      "Column Widths",
-        styleDeviation: "Style"
+        colWidths:          "Column Widths",
+        styleDeviation:     "Style",
+        colCountDiff:       "Column Count",
+        headerRowDiff:      "Header Rows",
+        footerRowDiff:      "Footer Rows",
+        cellStyleDevsCount: "Cell Styles"
     };
 
     // ── Navigation functions ─────────────────────────────────────────────────
@@ -850,9 +858,12 @@
 
         var table = s0;
 
-        var tblStyleRaw = safeStr(function () { return table.appliedTableStyle.name; });
-        var tblRowsRaw  = safeStr(function () { return table.rows.length; });
-        var tblColsRaw  = safeStr(function () { return table.columns.length; });
+        var tblStyleRaw   = safeStr(function () { return table.appliedTableStyle.name; });
+        var tblRowsRaw    = safeStr(function () { return table.rows.length; });
+        var tblColsRaw    = safeStr(function () { return table.columns.length; });
+        var tblHdrRowsRaw = safeStr(function () { return table.headerRowCount; });
+        var tblBdyRowsRaw = safeStr(function () { return table.bodyRowCount; });
+        var tblFtrRowsRaw = safeStr(function () { return table.footerRowCount; });
 
         var tblColWidths = [];
         try {
@@ -862,6 +873,40 @@
         } catch (e) {}
         var tblColWidthsStr = tblColWidths.length ? tblColWidths.join(", ") + " pt" : "—";
 
+        // Build a 2-D cell-style grid from a row collection (header, body, or footer)
+        function buildStyleGrid(rowCollection) {
+            var grid = [];
+            try {
+                for (var ri = 0; ri < rowCollection.length; ri++) {
+                    var rowStyles = [];
+                    try {
+                        var cells = rowCollection[ri].cells;
+                        for (var ci = 0; ci < cells.length; ci++) {
+                            try { rowStyles.push(cells[ci].appliedCellStyle.name); }
+                            catch (e) { rowStyles.push(""); }
+                        }
+                    } catch (e) {}
+                    grid.push(rowStyles);
+                }
+            } catch (e) {}
+            return grid;
+        }
+
+        var tblRefHdrStyles = buildStyleGrid(table.headerRows);
+        var tblRefBdyStyles = buildStyleGrid(table.bodyRows);
+        var tblRefFtrStyles = buildStyleGrid(table.footerRows);
+        var tblRefHdrCount  = tblRefHdrStyles.length;
+        var tblRefBdyCount  = tblRefBdyStyles.length;
+        var tblRefFtrCount  = tblRefFtrStyles.length;
+
+        var rowBreakdown = "H:" + tblHdrRowsRaw + " B:" + tblBdyRowsRaw + " F:" + tblFtrRowsRaw;
+
+        // Summary for the Cell Styles checkbox label
+        var cellStyleSummary = (tblRefBdyCount > 0 && tblRefBdyStyles[0].length > 0)
+            ? tblRefBdyStyles[0].join(" | ") : "—";
+        if (tblRefHdrCount > 0)
+            cellStyleSummary = "H:" + tblRefHdrCount + " B:" + tblRefBdyCount + " F:" + tblRefFtrCount + " rows";
+
         var dlgT = new Window("dialog", "Selection Inspector");
         dlgT.alignChildren = ["fill", "top"];
         dlgT.margins = 18;
@@ -869,18 +914,27 @@
         dlgT.preferredSize.width = 420;
 
         var tblInfoSecT = addSection(dlgT, "Table");
-        addRow(tblInfoSecT, "Table Style:",    tblStyleRaw);
-        addRow(tblInfoSecT, "Rows:",           tblRowsRaw);
-        addRow(tblInfoSecT, "Columns:",        tblColsRaw);
-        addRow(tblInfoSecT, "Column Widths:",  tblColWidthsStr);
+        addRow(tblInfoSecT, "Table Style:",   tblStyleRaw);
+        addRow(tblInfoSecT, "Rows:",          tblRowsRaw + "  (" + rowBreakdown + ")");
+        addRow(tblInfoSecT, "Columns:",       tblColsRaw);
+        addRow(tblInfoSecT, "Column Widths:", tblColWidthsStr);
 
         var tblPropSec = addSection(dlgT, "Match Properties");
         var cbTblStyle  = addCheckRow(tblPropSec,     "Table Style  (" + tblStyleRaw + ")");
-        var cbTblRows   = addCheckRow(tblPropSec,     "Rows  ("  + tblRowsRaw + ")");
+        var cbTblRows   = addCheckRow(tblPropSec,     "Rows  (" + tblRowsRaw + "  " + rowBreakdown + ")");
         var cbTblCols   = addCheckRow(tblPropSec,     "Columns  (" + tblColsRaw + ")");
         var rColWidths  = addToleranceRow(tblPropSec, "Column Widths  [" + tblColWidthsStr + "]", "pt");
         var cbColWidths = rColWidths.cb; var tolColWidths = rColWidths.tol;
         cbColWidths.enabled = (tblColWidths.length > 0);
+
+        var kwGrp = tblPropSec.add("group");
+        kwGrp.spacing = 8;
+        kwGrp.add("statictext", undefined, "Keyword (first cell):");
+        var kwField = kwGrp.add("edittext", undefined, "");
+        kwField.preferredSize.width = 180;
+
+        var cbCellStyles = addCheckRow(tblPropSec, "Cell Styles  [" + cellStyleSummary + "]");
+        cbCellStyles.enabled = (tblRefBdyCount > 0);
 
         var btnGrpT = dlgT.add("group");
         btnGrpT.alignment = "right";
@@ -890,8 +944,10 @@
 
         var matchRequestedT = false;
         matchBtnT.onClick = function () {
-            if (!cbTblStyle.value && !cbTblRows.value && !cbTblCols.value && !cbColWidths.value) {
-                alert("Please select at least one property to match against.");
+            var kw = kwField.text.replace(/^\s+|\s+$/g, "");
+            if (!cbTblStyle.value && !cbTblRows.value && !cbTblCols.value &&
+                !cbColWidths.value && !cbCellStyles.value && kw === "") {
+                alert("Please select at least one property to match against, or enter a keyword.");
                 return;
             }
             matchRequestedT = true;
@@ -901,15 +957,19 @@
         dlgT.show();
         if (!matchRequestedT) return;
 
-        var cwTolV = parseFloat(tolColWidths.text) || 0;
+        var kwText   = kwField.text.replace(/^\s+|\s+$/g, "").toLowerCase();
+        var cwTolV   = parseFloat(tolColWidths.text) || 0;
+        var refColsN = parseInt(tblColsRaw);
 
         var activePropsT = [];
         if (cbTblStyle.value)  activePropsT.push("Table Style: " + tblStyleRaw);
-        if (cbTblRows.value)   activePropsT.push("Rows: "        + tblRowsRaw);
-        if (cbTblCols.value)   activePropsT.push("Columns: "     + tblColsRaw);
+        if (cbTblRows.value)   activePropsT.push("Rows: " + tblRowsRaw + "  (" + rowBreakdown + ")");
+        if (cbTblCols.value)   activePropsT.push("Columns: " + tblColsRaw);
         if (cbColWidths.value && tblColWidths.length > 0) activePropsT.push(cwTolV > 0
             ? "Column Widths: [" + tblColWidthsStr + "] ± " + cwTolV + " pt"
             : "Column Widths: [" + tblColWidthsStr + "]");
+        if (kwText !== "") activePropsT.push("Keyword: \"" + kwField.text.replace(/^\s+|\s+$/g, "") + "\" in first cell");
+        if (cbCellStyles.value) activePropsT.push("Cell Styles: H:" + tblRefHdrCount + " B:" + tblRefBdyCount + " F:" + tblRefFtrCount + " pattern");
 
         var matchesT = [];
         try {
@@ -921,6 +981,15 @@
                         try {
                             var tblT = tablesT[tti];
                             if (!tblT.isValid) continue;
+
+                            // Keyword filter — first cell contents
+                            if (kwText !== "") {
+                                var firstCellText = "";
+                                try { firstCellText = String(tblT.cells[0].contents).toLowerCase(); } catch (e) {}
+                                if (firstCellText.indexOf(kwText) === -1) continue;
+                            }
+
+                            // Hard filters
                             if (cbTblStyle.value && tblT.appliedTableStyle.name !== tblStyleRaw) continue;
                             if (cbTblRows.value  && String(tblT.rows.length)    !== tblRowsRaw)  continue;
                             if (cbTblCols.value  && String(tblT.columns.length) !== tblColsRaw)  continue;
@@ -934,21 +1003,104 @@
                                 }
                                 if (!cwOk) continue;
                             }
-                            var baseTbE = "p." + getTablePage(tblT) + "  \u2014  " + tblT.rows.length + "\u00d7" + tblT.columns.length + "  [" + tblT.appliedTableStyle.name + "]";
+
+                            // Snapshot T_x row-type counts for base entry and deviation
+                            var hdrC = 0, bdyC = 0, ftrC = 0;
+                            try { hdrC = tblT.headerRowCount; } catch (e) {}
+                            try { bdyC = tblT.bodyRowCount;   } catch (e) {}
+                            try { ftrC = tblT.footerRowCount; } catch (e) {}
+
+                            var baseTbE = "p." + getTablePage(tblT) +
+                                "  —  " + tblT.rows.length + "×" + tblT.columns.length +
+                                " (H:" + hdrC + " B:" + bdyC + " F:" + ftrC + ")" +
+                                "  [" + tblT.appliedTableStyle.name + "]";
+
                             var devTbl = {};
-                            if (cbColWidths.value && tblColWidths.length > 0 && tblT.columns.length === tblColWidths.length) {
+
+                            // Column-width deviation (only when cbColWidths is checked and column counts match)
+                            if (cbColWidths.value && tblColWidths.length > 0 &&
+                                tblT.columns.length === tblColWidths.length) {
                                 var colDevArr = [];
                                 for (var cwdi = 0; cwdi < tblColWidths.length; cwdi++)
                                     colDevArr.push(roundTo(tblT.columns[cwdi].width - tblColWidths[cwdi], 2));
                                 devTbl.colWidths = colDevArr;
                             }
-                            // Passive table style observation
+
+                            // Passive table style deviation
                             if (!cbTblStyle.value) {
                                 try {
                                     var candTStyle = tblT.appliedTableStyle.name;
                                     if (candTStyle !== tblStyleRaw) devTbl.styleDeviation = candTStyle;
                                 } catch (e) {}
                             }
+
+                            // Passive column-count deviation
+                            if (!cbTblCols.value) {
+                                var colCountDiff = tblT.columns.length - refColsN;
+                                if (colCountDiff !== 0) devTbl.colCountDiff = colCountDiff;
+                            }
+
+                            // Passive header / footer row-count deviation (always tracked)
+                            var hdrDiff = hdrC - tblRefHdrCount;
+                            var ftrDiff = ftrC - tblRefFtrCount;
+                            if (hdrDiff !== 0) devTbl.headerRowDiff = hdrDiff;
+                            if (ftrDiff !== 0) devTbl.footerRowDiff = ftrDiff;
+
+                            // Cell-style deviation count (when cbCellStyles is checked)
+                            if (cbCellStyles.value && tblRefBdyCount > 0) {
+                                var csDevCount = 0;
+                                // Header rows — only compare rows that exist in both T_M and T_x
+                                if (tblRefHdrCount > 0 && hdrC > 0) {
+                                    try {
+                                        var hdrRows = tblT.headerRows;
+                                        var hGRows = tblRefHdrStyles.length;
+                                        var hGCols = tblRefHdrStyles[0].length || 1;
+                                        for (var hri = 0; hri < hdrRows.length; hri++) {
+                                            var hCells = hdrRows[hri].cells;
+                                            for (var hci = 0; hci < hCells.length; hci++) {
+                                                var hExp = tblRefHdrStyles[hri % hGRows][hci % hGCols] || "";
+                                                var hAct = "";
+                                                try { hAct = hCells[hci].appliedCellStyle.name; } catch (e) {}
+                                                if (hAct !== hExp) csDevCount++;
+                                            }
+                                        }
+                                    } catch (e) {}
+                                }
+                                // Body rows
+                                try {
+                                    var bdyRows = tblT.bodyRows;
+                                    var bGRows = tblRefBdyStyles.length;
+                                    var bGCols = tblRefBdyStyles[0].length || 1;
+                                    for (var bri = 0; bri < bdyRows.length; bri++) {
+                                        var bCells = bdyRows[bri].cells;
+                                        for (var bci = 0; bci < bCells.length; bci++) {
+                                            var bExp = tblRefBdyStyles[bri % bGRows][bci % bGCols] || "";
+                                            var bAct = "";
+                                            try { bAct = bCells[bci].appliedCellStyle.name; } catch (e) {}
+                                            if (bAct !== bExp) csDevCount++;
+                                        }
+                                    }
+                                } catch (e) {}
+                                // Footer rows — only compare if both T_M and T_x have footers
+                                if (tblRefFtrCount > 0 && ftrC > 0) {
+                                    try {
+                                        var ftrRows = tblT.footerRows;
+                                        var fGRows = tblRefFtrStyles.length;
+                                        var fGCols = tblRefFtrStyles[0].length || 1;
+                                        for (var fri = 0; fri < ftrRows.length; fri++) {
+                                            var fCells = ftrRows[fri].cells;
+                                            for (var fci = 0; fci < fCells.length; fci++) {
+                                                var fExp = tblRefFtrStyles[fri % fGRows][fci % fGCols] || "";
+                                                var fAct = "";
+                                                try { fAct = fCells[fci].appliedCellStyle.name; } catch (e) {}
+                                                if (fAct !== fExp) csDevCount++;
+                                            }
+                                        }
+                                    } catch (e) {}
+                                }
+                                if (csDevCount > 0) devTbl.cellStyleDevsCount = csDevCount;
+                            }
+
                             matchesT.push({
                                 ref: tblT, baseEntry: baseTbE,
                                 entry: baseTbE + buildDevFlag(devTbl),
@@ -962,20 +1114,82 @@
 
         if (matchesT.length === 0) { alert("No matching tables found."); return; }
 
-        // Merge function for table mode — normalises column widths and/or table style
         function tableMergeFn(match) {
             try {
                 var tblT = match.ref;
                 if (!tblT || !tblT.isValid) return;
-                if (match.dev.colWidths !== undefined) {
+
+                // 1. Add missing header rows
+                if (match.dev.headerRowDiff !== undefined && match.dev.headerRowDiff < 0) {
+                    try { tblT.headerRowCount = tblT.headerRowCount + (-match.dev.headerRowDiff); } catch (e) {}
+                    match.dev.headerRowDiff = 0;
+                }
+
+                // 2. Add missing footer rows
+                if (match.dev.footerRowDiff !== undefined && match.dev.footerRowDiff < 0) {
+                    try { tblT.footerRowCount = tblT.footerRowCount + (-match.dev.footerRowDiff); } catch (e) {}
+                    match.dev.footerRowDiff = 0;
+                }
+
+                // 3. Add missing columns (add all first, then set widths)
+                var columnsAdded = false;
+                if (match.dev.colCountDiff !== undefined && match.dev.colCountDiff < 0) {
+                    var colsToAdd = -match.dev.colCountDiff;
+                    try {
+                        for (var cai = 0; cai < colsToAdd; cai++)
+                            tblT.columns.add(LocationOptions.AT_END);
+                        columnsAdded = true;
+                    } catch (e) {}
+                    match.dev.colCountDiff = 0;
+                }
+
+                // 4. Normalise column widths — always if columns were added; also if cbColWidths is checked
+                if ((cbColWidths.value || columnsAdded) && tblColWidths.length > 0) {
                     var cols = tblT.columns;
                     for (var cwmi = 0; cwmi < tblColWidths.length && cwmi < cols.length; cwmi++) {
-                        if (match.dev.colWidths[cwmi] !== 0) {
-                            cols[cwmi].width = tblColWidths[cwmi];
-                            match.dev.colWidths[cwmi] = 0;
-                        }
+                        try { cols[cwmi].width = tblColWidths[cwmi]; } catch (e) {}
+                    }
+                    if (match.dev.colWidths) {
+                        for (var cwzi = 0; cwzi < match.dev.colWidths.length; cwzi++)
+                            match.dev.colWidths[cwzi] = 0;
                     }
                 }
+
+                // 5. Apply cell-style tiling (header / body / footer independently)
+                if (cbCellStyles.value) {
+                    var csLookup = {};
+                    try {
+                        var allCS = doc.allCellStyles;
+                        for (var csli = 0; csli < allCS.length; csli++) {
+                            if (allCS[csli].isValid) csLookup[allCS[csli].name] = allCS[csli];
+                        }
+                    } catch (e) {}
+
+                    function applyGridToRows(rowCollection, styleGrid) {
+                        if (!styleGrid || styleGrid.length === 0) return;
+                        var gRows = styleGrid.length;
+                        var gCols = styleGrid[0].length || 1;
+                        try {
+                            for (var gr = 0; gr < rowCollection.length; gr++) {
+                                var cells = rowCollection[gr].cells;
+                                for (var gc = 0; gc < cells.length; gc++) {
+                                    var sName = styleGrid[gr % gRows][gc % gCols];
+                                    if (sName && csLookup[sName]) {
+                                        try { cells[gc].appliedCellStyle = csLookup[sName]; } catch (e) {}
+                                    }
+                                }
+                            }
+                        } catch (e) {}
+                    }
+
+                    if (tblRefHdrCount > 0) applyGridToRows(tblT.headerRows, tblRefHdrStyles);
+                    applyGridToRows(tblT.bodyRows, tblRefBdyStyles);
+                    if (tblRefFtrCount > 0) applyGridToRows(tblT.footerRows, tblRefFtrStyles);
+
+                    match.dev.cellStyleDevsCount = 0;
+                }
+
+                // 6. Normalise table style
                 if (match.dev.styleDeviation !== undefined && match.dev.styleDeviation !== "") {
                     var targetTS = null;
                     var allTS = doc.allTableStyles;
@@ -987,6 +1201,7 @@
                         match.dev.styleDeviation = "";
                     }
                 }
+
                 match.entry = match.baseEntry + buildDevFlag(match.dev);
             } catch (e) {}
         }
