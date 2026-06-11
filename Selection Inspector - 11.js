@@ -117,6 +117,15 @@
         if (dev.height          !== undefined && dev.height          !== 0)  parts.push("h "       + fmtDev(dev.height)     + " pt");
         if (dev.cellWidth       !== undefined && dev.cellWidth       !== 0)  parts.push("cell-w "  + fmtDev(dev.cellWidth)  + " pt");
         if (dev.cellHeight      !== undefined && dev.cellHeight      !== 0)  parts.push("cell-h "  + fmtDev(dev.cellHeight) + " pt");
+        if (dev.colWidths !== undefined) {
+            var cwHasNonZero = false;
+            for (var cwbi = 0; cwbi < dev.colWidths.length; cwbi++) { if (dev.colWidths[cwbi] !== 0) { cwHasNonZero = true; break; } }
+            if (cwHasNonZero) {
+                var cwFmtParts = [];
+                for (var cwfi = 0; cwfi < dev.colWidths.length; cwfi++) cwFmtParts.push(fmtDev(dev.colWidths[cwfi]));
+                parts.push("col-w [" + cwFmtParts.join(", ") + "] pt");
+            }
+        }
         // String-valued passive style deviation — rendered with → rather than ±
         if (dev.styleDeviation  !== undefined && dev.styleDeviation  !== "") parts.push("style \u2192 \"" + dev.styleDeviation + "\"");
         return parts.length ? "  [\u03b4 " + parts.join(", ") + "]" : "";
@@ -130,6 +139,9 @@
             var v = dev[k];
             if (typeof v === "string"  && v !== "") return true;
             if (typeof v === "number"  && v !== 0)  return true;
+            if (typeof v === "object"  && v !== null && typeof v.length === "number") {
+                for (var ai = 0; ai < v.length; ai++) { if (v[ai] !== 0) return true; }
+            }
         }
         return false;
     }
@@ -143,6 +155,7 @@
         height:         "Height",
         cellWidth:      "Cell Width",
         cellHeight:     "Cell Height",
+        colWidths:      "Column Widths",
         styleDeviation: "Style"
     };
 
@@ -841,6 +854,14 @@
         var tblRowsRaw  = safeStr(function () { return table.rows.length; });
         var tblColsRaw  = safeStr(function () { return table.columns.length; });
 
+        var tblColWidths = [];
+        try {
+            var refCols = table.columns;
+            for (var rwi = 0; rwi < refCols.length; rwi++)
+                tblColWidths.push(roundTo(refCols[rwi].width, 3));
+        } catch (e) {}
+        var tblColWidthsStr = tblColWidths.length ? tblColWidths.join(", ") + " pt" : "—";
+
         var dlgT = new Window("dialog", "Selection Inspector");
         dlgT.alignChildren = ["fill", "top"];
         dlgT.margins = 18;
@@ -848,14 +869,18 @@
         dlgT.preferredSize.width = 420;
 
         var tblInfoSecT = addSection(dlgT, "Table");
-        addRow(tblInfoSecT, "Table Style:", tblStyleRaw);
-        addRow(tblInfoSecT, "Rows:",        tblRowsRaw);
-        addRow(tblInfoSecT, "Columns:",     tblColsRaw);
+        addRow(tblInfoSecT, "Table Style:",    tblStyleRaw);
+        addRow(tblInfoSecT, "Rows:",           tblRowsRaw);
+        addRow(tblInfoSecT, "Columns:",        tblColsRaw);
+        addRow(tblInfoSecT, "Column Widths:",  tblColWidthsStr);
 
         var tblPropSec = addSection(dlgT, "Match Properties");
-        var cbTblStyle = addCheckRow(tblPropSec, "Table Style  (" + tblStyleRaw + ")");
-        var cbTblRows  = addCheckRow(tblPropSec, "Rows  ("  + tblRowsRaw + ")");
-        var cbTblCols  = addCheckRow(tblPropSec, "Columns  (" + tblColsRaw + ")");
+        var cbTblStyle  = addCheckRow(tblPropSec,     "Table Style  (" + tblStyleRaw + ")");
+        var cbTblRows   = addCheckRow(tblPropSec,     "Rows  ("  + tblRowsRaw + ")");
+        var cbTblCols   = addCheckRow(tblPropSec,     "Columns  (" + tblColsRaw + ")");
+        var rColWidths  = addToleranceRow(tblPropSec, "Column Widths  [" + tblColWidthsStr + "]", "pt");
+        var cbColWidths = rColWidths.cb; var tolColWidths = rColWidths.tol;
+        cbColWidths.enabled = (tblColWidths.length > 0);
 
         var btnGrpT = dlgT.add("group");
         btnGrpT.alignment = "right";
@@ -865,7 +890,7 @@
 
         var matchRequestedT = false;
         matchBtnT.onClick = function () {
-            if (!cbTblStyle.value && !cbTblRows.value && !cbTblCols.value) {
+            if (!cbTblStyle.value && !cbTblRows.value && !cbTblCols.value && !cbColWidths.value) {
                 alert("Please select at least one property to match against.");
                 return;
             }
@@ -876,10 +901,15 @@
         dlgT.show();
         if (!matchRequestedT) return;
 
+        var cwTolV = parseFloat(tolColWidths.text) || 0;
+
         var activePropsT = [];
-        if (cbTblStyle.value) activePropsT.push("Table Style: " + tblStyleRaw);
-        if (cbTblRows.value)  activePropsT.push("Rows: "        + tblRowsRaw);
-        if (cbTblCols.value)  activePropsT.push("Columns: "     + tblColsRaw);
+        if (cbTblStyle.value)  activePropsT.push("Table Style: " + tblStyleRaw);
+        if (cbTblRows.value)   activePropsT.push("Rows: "        + tblRowsRaw);
+        if (cbTblCols.value)   activePropsT.push("Columns: "     + tblColsRaw);
+        if (cbColWidths.value && tblColWidths.length > 0) activePropsT.push(cwTolV > 0
+            ? "Column Widths: [" + tblColWidthsStr + "] ± " + cwTolV + " pt"
+            : "Column Widths: [" + tblColWidthsStr + "]");
 
         var matchesT = [];
         try {
@@ -894,8 +924,24 @@
                             if (cbTblStyle.value && tblT.appliedTableStyle.name !== tblStyleRaw) continue;
                             if (cbTblRows.value  && String(tblT.rows.length)    !== tblRowsRaw)  continue;
                             if (cbTblCols.value  && String(tblT.columns.length) !== tblColsRaw)  continue;
+                            if (cbColWidths.value && tblColWidths.length > 0) {
+                                if (tblT.columns.length !== tblColWidths.length) continue;
+                                var cwOk = true;
+                                for (var cwfi2 = 0; cwfi2 < tblColWidths.length; cwfi2++) {
+                                    if (Math.abs(roundTo(tblT.columns[cwfi2].width, 3) - tblColWidths[cwfi2]) > cwTolV) {
+                                        cwOk = false; break;
+                                    }
+                                }
+                                if (!cwOk) continue;
+                            }
                             var baseTbE = "p." + getTablePage(tblT) + "  \u2014  " + tblT.rows.length + "\u00d7" + tblT.columns.length + "  [" + tblT.appliedTableStyle.name + "]";
                             var devTbl = {};
+                            if (cbColWidths.value && tblColWidths.length > 0 && tblT.columns.length === tblColWidths.length) {
+                                var colDevArr = [];
+                                for (var cwdi = 0; cwdi < tblColWidths.length; cwdi++)
+                                    colDevArr.push(roundTo(tblT.columns[cwdi].width - tblColWidths[cwdi], 2));
+                                devTbl.colWidths = colDevArr;
+                            }
                             // Passive table style observation
                             if (!cbTblStyle.value) {
                                 try {
@@ -916,11 +962,20 @@
 
         if (matchesT.length === 0) { alert("No matching tables found."); return; }
 
-        // Merge function for table mode — normalises table style deviation
+        // Merge function for table mode — normalises column widths and/or table style
         function tableMergeFn(match) {
             try {
                 var tblT = match.ref;
                 if (!tblT || !tblT.isValid) return;
+                if (match.dev.colWidths !== undefined) {
+                    var cols = tblT.columns;
+                    for (var cwmi = 0; cwmi < tblColWidths.length && cwmi < cols.length; cwmi++) {
+                        if (match.dev.colWidths[cwmi] !== 0) {
+                            cols[cwmi].width = tblColWidths[cwmi];
+                            match.dev.colWidths[cwmi] = 0;
+                        }
+                    }
+                }
                 if (match.dev.styleDeviation !== undefined && match.dev.styleDeviation !== "") {
                     var targetTS = null;
                     var allTS = doc.allTableStyles;
