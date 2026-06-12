@@ -146,19 +146,6 @@
         return false;
     }
 
-    // Human-readable labels for each deviation key
-    var DEV_LABELS = {
-        fontSize:       "Font Size",
-        leading:        "Leading",
-        tracking:       "Tracking",
-        width:          "Width",
-        height:         "Height",
-        cellWidth:      "Cell Width",
-        cellHeight:     "Cell Height",
-        colWidths:      "Column Widths",
-        styleDeviation: "Style"
-    };
-
     // ── Navigation functions ─────────────────────────────────────────────────
 
     function navToPara(para) {
@@ -233,6 +220,168 @@
         }
     }
 
+    // ── Adjust Merge Targets dialog ──────────────────────────────────────────
+    //
+    // fields[] entries: { applyKey, valueKey, label, unit, type, devKey,
+    //   styleCollection?, minValue?, displayStr?, enabled }
+    //   type: "string" | "number" | "enum" | "colWidths"
+    //
+    function buildAdjustDialog(mergeTarget, fields, deviantMatches) {
+        // Collect which dev keys have non-zero deviations across all deviants
+        var deviantKeys = {};
+        for (var dmi = 0; dmi < deviantMatches.length; dmi++) {
+            var dmdev = deviantMatches[dmi].dev;
+            if (!dmdev) continue;
+            for (var ddk in dmdev) {
+                if (!dmdev.hasOwnProperty(ddk)) continue;
+                var ddv = dmdev[ddk];
+                if (typeof ddv === "string" && ddv !== "")  { deviantKeys[ddk] = true; }
+                else if (typeof ddv === "number" && ddv !== 0)   { deviantKeys[ddk] = true; }
+                else if (typeof ddv === "object" && ddv !== null) {
+                    for (var dai = 0; dai < ddv.length; dai++) { if (ddv[dai] !== 0) { deviantKeys[ddk] = true; break; } }
+                }
+            }
+        }
+
+        var adjDlg = new Window("dialog", "Adjust Merge Targets");
+        adjDlg.alignChildren = ["fill", "top"];
+        adjDlg.margins = 18;
+        adjDlg.spacing = 10;
+        adjDlg.preferredSize.width = 420;
+
+        var adjPropSec = addSection(adjDlg, "Properties to apply");
+        adjPropSec.spacing = 6;
+
+        var allAdjCbs    = [];
+        var adjFldCtrls  = [];
+
+        for (var fi = 0; fi < fields.length; fi++) {
+            var f = fields[fi];
+            if (!f.enabled) continue;
+
+            if (f.type === "colWidths") {
+                var cwHdrGrp = adjPropSec.add("group");
+                cwHdrGrp.alignChildren = ["left", "center"];
+                cwHdrGrp.spacing = 8;
+                var cwCb = cwHdrGrp.add("checkbox", undefined, f.label);
+                cwCb.value = !!(f.devKey && deviantKeys[f.devKey]);
+                allAdjCbs.push(cwCb);
+
+                var cwBodyGrp = adjPropSec.add("group");
+                cwBodyGrp.orientation = "column";
+                cwBodyGrp.alignChildren = ["left", "top"];
+                cwBodyGrp.margins = [20, 0, 0, 0];
+                cwBodyGrp.spacing = 4;
+
+                var cwInputs = [];
+                var cwVals = mergeTarget[f.valueKey];
+                for (var cwi = 0; cwi < cwVals.length; cwi++) {
+                    var cwRow = cwBodyGrp.add("group");
+                    cwRow.alignChildren = ["left", "center"];
+                    cwRow.spacing = 6;
+                    var cwLbl = cwRow.add("statictext", undefined, "Col " + (cwi + 1) + ":");
+                    cwLbl.preferredSize.width = 50;
+                    var cwFld = cwRow.add("edittext", undefined, String(cwVals[cwi]));
+                    cwFld.preferredSize.width = 70;
+                    cwRow.add("statictext", undefined, "pt");
+                    cwInputs.push(cwFld);
+                }
+                adjFldCtrls.push({ cb: cwCb, inputs: cwInputs, field: f });
+                continue;
+            }
+
+            var adjRow = adjPropSec.add("group");
+            adjRow.alignChildren = ["left", "center"];
+            adjRow.spacing = 8;
+
+            var adjCb = adjRow.add("checkbox", undefined, "");
+            adjCb.value = !!(f.devKey && deviantKeys[f.devKey]);
+            allAdjCbs.push(adjCb);
+
+            var adjLbl = adjRow.add("statictext", undefined, f.label + ":");
+            adjLbl.preferredSize.width = 150;
+
+            var adjInp;
+            if (f.type === "enum") {
+                adjInp = adjRow.add("statictext", undefined, f.displayStr || "—");
+                adjInp.preferredSize.width = 130;
+            } else {
+                var adjInitVal = mergeTarget[f.valueKey];
+                adjInp = adjRow.add("edittext", undefined,
+                    (adjInitVal !== null && adjInitVal !== undefined) ? String(adjInitVal) : "");
+                adjInp.preferredSize.width = 130;
+            }
+
+            if (f.unit) adjRow.add("statictext", undefined, f.unit);
+
+            adjFldCtrls.push({ cb: adjCb, inputs: [adjInp], field: f });
+        }
+
+        var adjBtnGrp = adjDlg.add("group");
+        adjBtnGrp.alignment = "right";
+        adjBtnGrp.spacing = 8;
+        var adjMergeBtn  = adjBtnGrp.add("button", undefined, "Merge");
+        var adjCancelBtn = adjBtnGrp.add("button", undefined, "Cancel");
+
+        function updateAdjMergeBtn() {
+            var any = false;
+            for (var aci = 0; aci < allAdjCbs.length; aci++) { if (allAdjCbs[aci].value) { any = true; break; } }
+            adjMergeBtn.enabled = any;
+        }
+        for (var adjCbi = 0; adjCbi < allAdjCbs.length; adjCbi++) {
+            (function (thisCb) { thisCb.onClick = function () { updateAdjMergeBtn(); }; })(allAdjCbs[adjCbi]);
+        }
+        updateAdjMergeBtn();
+
+        var adjConfirmed = false;
+
+        adjMergeBtn.onClick = function () {
+            for (var vi = 0; vi < adjFldCtrls.length; vi++) {
+                var vfc = adjFldCtrls[vi];
+                if (!vfc.cb.value) continue;
+                if (vfc.field.type === "number") {
+                    var nv = parseFloat(vfc.inputs[0].text);
+                    if (isNaN(nv)) { alert("\"" + vfc.field.label + "\" requires a valid number."); return; }
+                    if (vfc.field.minValue !== null && vfc.field.minValue !== undefined && nv <= vfc.field.minValue) {
+                        alert("\"" + vfc.field.label + "\" must be greater than " + vfc.field.minValue + "."); return;
+                    }
+                }
+                if (vfc.field.type === "colWidths") {
+                    for (var cwvi = 0; cwvi < vfc.inputs.length; cwvi++) {
+                        var cwv = parseFloat(vfc.inputs[cwvi].text);
+                        if (isNaN(cwv) || cwv <= 0) { alert("Column " + (cwvi + 1) + " width must be a positive number."); return; }
+                    }
+                }
+                if (vfc.field.styleCollection) {
+                    var sname = vfc.inputs[0].text;
+                    var scoll = vfc.field.styleCollection();
+                    var sfound = false;
+                    for (var sci2 = 0; sci2 < scoll.length; sci2++) { if (scoll[sci2].name === sname) { sfound = true; break; } }
+                    if (!sfound) { alert("Style not found: \"" + sname + "\".\nCheck the name and try again."); return; }
+                }
+            }
+            for (var wi = 0; wi < adjFldCtrls.length; wi++) {
+                var wfc = adjFldCtrls[wi];
+                mergeTarget[wfc.field.applyKey] = wfc.cb.value;
+                if (wfc.field.type === "number" || wfc.field.type === "string") {
+                    mergeTarget[wfc.field.valueKey] = wfc.inputs[0].text;
+                }
+                if (wfc.field.type === "colWidths") {
+                    for (var cwwi = 0; cwwi < wfc.inputs.length; cwwi++) {
+                        mergeTarget[wfc.field.valueKey][cwwi] = parseFloat(wfc.inputs[cwwi].text);
+                    }
+                }
+            }
+            adjConfirmed = true;
+            adjDlg.close();
+        };
+
+        adjCancelBtn.onClick = function () { adjDlg.close(); };
+
+        adjDlg.show();
+        return adjConfirmed;
+    }
+
     // ── Core navigator — runs inside app.doScript ────────────────────────────
     //
     // Each match object: { ref, baseEntry, entry, dev, props }
@@ -246,7 +395,7 @@
     //   to the InDesign object and zeroes the relevant dev keys.
     //   Pass null for modes with no numeric deviations (Table mode).
     //
-    function runStepThrough(matches, navFn, label, mergeFn) {
+    function runStepThrough(matches, navFn, label, mergeFn, adjustAndConfirmFn) {
         if (!matches || matches.length === 0) { alert("No matching " + label + " found."); return; }
 
         var total        = matches.length;
@@ -344,16 +493,10 @@
                 if (current.length === 0) return;
 
                 // Identify which selected items are actually deviants
-                var deviants    = [];
-                var devPropSeen = {};
+                var deviants = [];
                 for (var di = 0; di < current.length; di++) {
                     var m = matches[current[di]];
-                    if (m.dev && hasDev(m.dev)) {
-                        deviants.push(current[di]);
-                        for (var dk in m.dev) {
-                            if (m.dev.hasOwnProperty(dk) && m.dev[dk] !== 0) devPropSeen[dk] = true;
-                        }
-                    }
+                    if (m.dev && hasDev(m.dev)) deviants.push(current[di]);
                 }
 
                 if (deviants.length === 0) {
@@ -361,35 +504,10 @@
                     return;
                 }
 
-                // Collect human-readable property names for confirmation
-                var propNameList = [];
-                for (var pk in devPropSeen) {
-                    if (devPropSeen.hasOwnProperty(pk)) propNameList.push(DEV_LABELS[pk] || pk);
-                }
-
-                // Confirmation dialog — UI only, no document writes here
-                var confirmDlg = new Window("dialog", "Confirm Merge");
-                confirmDlg.alignChildren = ["fill", "top"];
-                confirmDlg.margins = 18;
-                confirmDlg.spacing = 10;
-                confirmDlg.preferredSize.width = 340;
-                var sumLine1 = confirmDlg.add("statictext", undefined,
-                    deviants.length + " deviant(s) will be normalised on:", { multiline: true });
-                sumLine1.preferredSize.width = 300;
-                var sumLine2 = confirmDlg.add("statictext", undefined,
-                    propNameList.join(", "), { multiline: true });
-                sumLine2.preferredSize.width = 300;
-                var confirmBtns = confirmDlg.add("group");
-                confirmBtns.alignment = "right";
-                confirmBtns.spacing = 8;
-                var okBtn     = confirmBtns.add("button", undefined, "Merge");
-                var cancelBtn = confirmBtns.add("button", undefined, "Cancel");
-                var confirmed = false;
-                okBtn.onClick     = function () { confirmed = true;  confirmDlg.close(); };
-                cancelBtn.onClick = function () { confirmed = false; confirmDlg.close(); };
-                confirmDlg.show();
-
-                if (!confirmed) return;
+                // Stage 4: open Adjust Merge Targets dialog
+                var deviantMatchObjs = [];
+                for (var dmo = 0; dmo < deviants.length; dmo++) deviantMatchObjs.push(matches[deviants[dmo]]);
+                if (!adjustAndConfirmFn(deviantMatchObjs)) return;
 
                 // Store deviants for the while loop to write — then close
                 pendingMerge = deviants;
@@ -490,6 +608,13 @@
         var trackingRaw  = safeStr(function () { return para.tracking; });
         var charStyles   = getCharStylesInPara(para);
 
+        var mergeTargetTx = {
+            applyStyle: false, style:    paraStyleRaw,
+            applySize:  false, fontSize: fontSizeRaw,
+            applyLeading:  false, leading:  leadingRaw,
+            applyTracking: false, tracking: trackingRaw
+        };
+
         var dlg = new Window("dialog", "Selection Inspector");
         dlg.alignChildren = ["fill", "top"];
         dlg.margins = 18;
@@ -578,19 +703,18 @@
             } catch (e) { return null; }
         }
 
-        // Merge function: writes target values back to deviating properties
         function textMergeFn(match) {
             try {
                 var tp = match.ref;
                 if (!tp || !tp.isValid) return;
-                if (match.dev.fontSize       !== undefined && match.dev.fontSize       !== 0)  { tp.pointSize = parseFloat(fontSizeRaw); match.dev.fontSize  = 0; }
-                if (match.dev.leading        !== undefined && match.dev.leading        !== 0)  { tp.leading   = parseFloat(leadingRaw);  match.dev.leading   = 0; }
-                if (match.dev.tracking       !== undefined && match.dev.tracking       !== 0)  { tp.tracking  = parseFloat(trackingRaw); match.dev.tracking  = 0; }
-                if (match.dev.styleDeviation !== undefined && match.dev.styleDeviation !== "") {
+                if (mergeTargetTx.applySize)     { tp.pointSize = parseFloat(mergeTargetTx.fontSize); match.dev.fontSize  = 0; }
+                if (mergeTargetTx.applyLeading)  { tp.leading   = parseFloat(mergeTargetTx.leading);  match.dev.leading   = 0; }
+                if (mergeTargetTx.applyTracking) { tp.tracking  = parseFloat(mergeTargetTx.tracking); match.dev.tracking  = 0; }
+                if (mergeTargetTx.applyStyle) {
                     var targetStyle = null;
                     var allPS = doc.allParagraphStyles;
                     for (var si = 0; si < allPS.length; si++) {
-                        if (allPS[si].name === paraStyleRaw) { targetStyle = allPS[si]; break; }
+                        if (allPS[si].name === mergeTargetTx.style) { targetStyle = allPS[si]; break; }
                     }
                     if (targetStyle && targetStyle.isValid) {
                         tp.applyParagraphStyle(targetStyle, false);
@@ -655,8 +779,16 @@
 
         if (matches.length === 0) { alert("No matching paragraphs found."); return; }
 
+        var adjFieldsTx = [
+            { applyKey: "applyStyle",    valueKey: "style",    label: "Paragraph Style", unit: "",   type: "string", devKey: "styleDeviation", styleCollection: function () { return doc.allParagraphStyles; }, enabled: true },
+            { applyKey: "applySize",     valueKey: "fontSize", label: "Font Size",        unit: "pt", type: "number", devKey: "fontSize",        minValue: 0,     enabled: true },
+            { applyKey: "applyLeading",  valueKey: "leading",  label: "Leading",          unit: "pt", type: "number", devKey: "leading",         minValue: null,  enabled: true },
+            { applyKey: "applyTracking", valueKey: "tracking", label: "Tracking",         unit: "u",  type: "number", devKey: "tracking",        minValue: null,  enabled: true }
+        ];
+        function textAdjustFn(devMatches) { return buildAdjustDialog(mergeTargetTx, adjFieldsTx, devMatches); }
+
         app.doScript(
-            function () { runStepThrough(matches, navToPara, "paragraphs", textMergeFn); },
+            function () { runStepThrough(matches, navToPara, "paragraphs", textMergeFn, textAdjustFn); },
             ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Selection Inspector"
         );
         return;
@@ -679,6 +811,12 @@
         var cellBotRaw    = safeStr(function () { return roundTo(cell.bottomInset, 3); });
         var cellInsetsStr = "Top: " + cellTopRaw + "  Left: " + cellLeftRaw +
                             "  Right: " + cellRightRaw + "  Bottom: " + cellBotRaw;
+
+        var mergeTargetC = {
+            applyStyle:  false, style:  cellStyleRaw,
+            applyHeight: false, height: cellHRaw,
+            applyWidth:  false, width:  cellWRaw
+        };
 
         var parentTableId  = -1;
         var parentTblStyle = "\u2014";
@@ -749,18 +887,17 @@
             : "Width: " + cellWRaw + " pt");
         if (cbCellInsets.value) activePropsC.push("Insets: [" + cellInsetsStr + "]");
 
-        // Merge function for cell mode
         function cellMergeFn(match) {
             try {
                 var cand = match.ref;
                 if (!cand || !cand.isValid) return;
-                if (match.dev.cellHeight     !== undefined && match.dev.cellHeight     !== 0)  { cand.height = parseFloat(cellHRaw); match.dev.cellHeight = 0; }
-                if (match.dev.cellWidth      !== undefined && match.dev.cellWidth      !== 0)  { cand.width  = parseFloat(cellWRaw); match.dev.cellWidth  = 0; }
-                if (match.dev.styleDeviation !== undefined && match.dev.styleDeviation !== "") {
+                if (mergeTargetC.applyHeight) { cand.height = parseFloat(mergeTargetC.height); match.dev.cellHeight = 0; }
+                if (mergeTargetC.applyWidth)  { cand.width  = parseFloat(mergeTargetC.width);  match.dev.cellWidth  = 0; }
+                if (mergeTargetC.applyStyle) {
                     var targetCS = null;
                     var allCS = doc.allCellStyles;
                     for (var csi = 0; csi < allCS.length; csi++) {
-                        if (allCS[csi].name === cellStyleRaw) { targetCS = allCS[csi]; break; }
+                        if (allCS[csi].name === mergeTargetC.style) { targetCS = allCS[csi]; break; }
                     }
                     if (targetCS && targetCS.isValid) {
                         cand.appliedCellStyle = targetCS;
@@ -835,8 +972,15 @@
 
         if (matchesC.length === 0) { alert("No matching cells found."); return; }
 
+        var adjFieldsC = [
+            { applyKey: "applyStyle",  valueKey: "style",  label: "Cell Style", unit: "",   type: "string", devKey: "styleDeviation", styleCollection: function () { return doc.allCellStyles; }, enabled: true },
+            { applyKey: "applyHeight", valueKey: "height", label: "Height",     unit: "pt", type: "number", devKey: "cellHeight",      minValue: 0,     enabled: true },
+            { applyKey: "applyWidth",  valueKey: "width",  label: "Width",      unit: "pt", type: "number", devKey: "cellWidth",       minValue: 0,     enabled: true }
+        ];
+        function cellAdjustFn(devMatches) { return buildAdjustDialog(mergeTargetC, adjFieldsC, devMatches); }
+
         app.doScript(
-            function () { runStepThrough(matchesC, navToCell, "cells", cellMergeFn); },
+            function () { runStepThrough(matchesC, navToCell, "cells", cellMergeFn, cellAdjustFn); },
             ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Selection Inspector"
         );
         return;
@@ -861,6 +1005,11 @@
                 tblColWidths.push(roundTo(refCols[rwi].width, 3));
         } catch (e) {}
         var tblColWidthsStr = tblColWidths.length ? tblColWidths.join(", ") + " pt" : "—";
+
+        var mergeTargetTb = {
+            applyStyle:     false, style:     tblStyleRaw,
+            applyColWidths: false, colWidths: tblColWidths.slice()
+        };
 
         var dlgT = new Window("dialog", "Selection Inspector");
         dlgT.alignChildren = ["fill", "top"];
@@ -962,25 +1111,27 @@
 
         if (matchesT.length === 0) { alert("No matching tables found."); return; }
 
-        // Merge function for table mode — normalises column widths and/or table style
         function tableMergeFn(match) {
             try {
                 var tblT = match.ref;
                 if (!tblT || !tblT.isValid) return;
-                if (match.dev.colWidths !== undefined) {
+                if (mergeTargetTb.applyColWidths) {
                     var cols = tblT.columns;
-                    for (var cwmi = 0; cwmi < tblColWidths.length && cwmi < cols.length; cwmi++) {
-                        if (match.dev.colWidths[cwmi] !== 0) {
-                            cols[cwmi].width = tblColWidths[cwmi];
-                            match.dev.colWidths[cwmi] = 0;
-                        }
+                    for (var cwmi = 0; cwmi < mergeTargetTb.colWidths.length && cwmi < cols.length; cwmi++) {
+                        cols[cwmi].width = parseFloat(mergeTargetTb.colWidths[cwmi]);
+                    }
+                    if (match.dev.colWidths) {
+                        for (var cwzi = 0; cwzi < match.dev.colWidths.length; cwzi++) match.dev.colWidths[cwzi] = 0;
+                    } else {
+                        match.dev.colWidths = [];
+                        for (var cwni = 0; cwni < mergeTargetTb.colWidths.length; cwni++) match.dev.colWidths.push(0);
                     }
                 }
-                if (match.dev.styleDeviation !== undefined && match.dev.styleDeviation !== "") {
+                if (mergeTargetTb.applyStyle) {
                     var targetTS = null;
                     var allTS = doc.allTableStyles;
                     for (var tsi = 0; tsi < allTS.length; tsi++) {
-                        if (allTS[tsi].name === tblStyleRaw) { targetTS = allTS[tsi]; break; }
+                        if (allTS[tsi].name === mergeTargetTb.style) { targetTS = allTS[tsi]; break; }
                     }
                     if (targetTS && targetTS.isValid) {
                         tblT.appliedTableStyle = targetTS;
@@ -991,8 +1142,14 @@
             } catch (e) {}
         }
 
+        var adjFieldsTb = [
+            { applyKey: "applyStyle",     valueKey: "style",     label: "Table Style",    unit: "",   type: "string",    devKey: "styleDeviation", styleCollection: function () { return doc.allTableStyles; }, enabled: true },
+            { applyKey: "applyColWidths", valueKey: "colWidths", label: "Column Widths",  unit: "pt", type: "colWidths", devKey: "colWidths",       enabled: tblColWidths.length > 0 }
+        ];
+        function tableAdjustFn(devMatches) { return buildAdjustDialog(mergeTargetTb, adjFieldsTb, devMatches); }
+
         app.doScript(
-            function () { runStepThrough(matchesT, navToTable, "tables", tableMergeFn); },
+            function () { runStepThrough(matchesT, navToTable, "tables", tableMergeFn, tableAdjustFn); },
             ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Selection Inspector"
         );
         return;
@@ -1027,6 +1184,14 @@
         rawBaselineMin       = roundTo(tfp.minimumFirstBaselineOffset, 3);
         rawBaselineMinStr    = rawBaselineMin + " pt";
     } catch (e) {}
+
+    var mergeTargetF = {
+        applyStyle:       false, style:       objStyle,
+        applyWidth:       false, width:       rawW !== null ? String(rawW) : null,
+        applyHeight:      false, height:      rawH !== null ? String(rawH) : null,
+        applyBaseline:    false, baseline:    rawBaselineOffset,
+        applyBaselineMin: false, baselineMin: rawBaselineMin !== null ? String(rawBaselineMin) : null
+    };
 
     var dlg2 = new Window("dialog", "Selection Inspector");
     dlg2.alignChildren = ["fill", "top"];
@@ -1093,27 +1258,32 @@
         ? "Baseline Minimum: " + rawBaselineMinStr + " \u00b1 " + bmTolV + " pt \u2192 " + roundTo(rawBaselineMin - bmTolV, 2) + "\u2013" + roundTo(rawBaselineMin + bmTolV, 2) + " pt"
         : "Baseline Minimum: " + rawBaselineMinStr);
 
-    // Merge function for frame mode — adjusts geometricBounds to target dimensions
     function frameMergeFn(match) {
         try {
             var item = match.ref;
             if (!item || !item.isValid) return;
-            var bnds = item.geometricBounds;
-            if (match.dev.width  !== undefined && match.dev.width  !== 0) {
+            var bnds;
+            if (mergeTargetF.applyWidth && mergeTargetF.width !== null) {
                 bnds = item.geometricBounds;
-                item.geometricBounds = [bnds[0], bnds[1], bnds[2], bnds[1] + rawW];
+                item.geometricBounds = [bnds[0], bnds[1], bnds[2], bnds[1] + parseFloat(mergeTargetF.width)];
                 match.dev.width = 0;
             }
-            if (match.dev.height !== undefined && match.dev.height !== 0) {
+            if (mergeTargetF.applyHeight && mergeTargetF.height !== null) {
                 bnds = item.geometricBounds;
-                item.geometricBounds = [bnds[0], bnds[1], bnds[0] + rawH, bnds[3]];
+                item.geometricBounds = [bnds[0], bnds[1], bnds[0] + parseFloat(mergeTargetF.height), bnds[3]];
                 match.dev.height = 0;
             }
-            if (match.dev.styleDeviation !== undefined && match.dev.styleDeviation !== "") {
+            if (mergeTargetF.applyBaseline && mergeTargetF.baseline !== null) {
+                try { item.textFramePreferences.firstBaselineOffset = mergeTargetF.baseline; } catch (e2) {}
+            }
+            if (mergeTargetF.applyBaselineMin && mergeTargetF.baselineMin !== null) {
+                try { item.textFramePreferences.minimumFirstBaselineOffset = parseFloat(mergeTargetF.baselineMin); } catch (e3) {}
+            }
+            if (mergeTargetF.applyStyle) {
                 var targetOS = null;
                 var allOS = doc.allObjectStyles;
                 for (var osi = 0; osi < allOS.length; osi++) {
-                    if (allOS[osi].name === objStyle) { targetOS = allOS[osi]; break; }
+                    if (allOS[osi].name === mergeTargetF.style) { targetOS = allOS[osi]; break; }
                 }
                 if (targetOS && targetOS.isValid) {
                     item.appliedObjectStyle = targetOS;
@@ -1173,8 +1343,17 @@
 
     if (matches2.length === 0) { alert("No matching frames found."); return; }
 
+    var adjFieldsF = [
+        { applyKey: "applyStyle",       valueKey: "style",       label: "Object Style",     unit: "",   type: "string", devKey: "styleDeviation", styleCollection: function () { return doc.allObjectStyles; }, enabled: true },
+        { applyKey: "applyWidth",       valueKey: "width",       label: "Width",            unit: "pt", type: "number", devKey: "width",          minValue: 0,    enabled: rawW !== null },
+        { applyKey: "applyHeight",      valueKey: "height",      label: "Height",           unit: "pt", type: "number", devKey: "height",         minValue: 0,    enabled: rawH !== null },
+        { applyKey: "applyBaseline",    valueKey: "baseline",    label: "Baseline Offset",  unit: "",   type: "enum",   devKey: null,             displayStr: rawBaselineOffsetStr, enabled: rawBaselineOffset !== null },
+        { applyKey: "applyBaselineMin", valueKey: "baselineMin", label: "Baseline Minimum", unit: "pt", type: "number", devKey: null,             minValue: null, enabled: rawBaselineMin !== null }
+    ];
+    function frameAdjustFn(devMatches) { return buildAdjustDialog(mergeTargetF, adjFieldsF, devMatches); }
+
     app.doScript(
-        function () { runStepThrough(matches2, navToItem, "frames", frameMergeFn); },
+        function () { runStepThrough(matches2, navToItem, "frames", frameMergeFn, frameAdjustFn); },
         ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Selection Inspector"
     );
 
