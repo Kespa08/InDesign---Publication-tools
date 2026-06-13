@@ -259,6 +259,42 @@
             var f = fields[fi];
             if (!f.enabled) continue;
 
+            if (f.type === "countWithDefault") {
+                var cdrGrp = adjPropSec.add("group");
+                cdrGrp.alignChildren = ["left", "center"];
+                cdrGrp.spacing = 8;
+                var cdrCb = cdrGrp.add("checkbox", undefined, "");
+                cdrCb.value = false;
+                allAdjCbs.push(cdrCb);
+                var cdrLbl = cdrGrp.add("statictext", undefined, f.label + ":");
+                cdrLbl.preferredSize.width = 150;
+                var cdrMain = cdrGrp.add("edittext", undefined, String(mergeTarget[f.valueKey]));
+                cdrMain.preferredSize.width = 60;
+                if (f.unit) cdrGrp.add("statictext", undefined, f.unit);
+
+                var cdrSubRow = adjPropSec.add("group");
+                cdrSubRow.alignChildren = ["left", "center"];
+                cdrSubRow.spacing = 8;
+                cdrSubRow.margins = [24, 0, 0, 0];
+                var cdrSubLbl = cdrSubRow.add("statictext", undefined, f.sub.label + ":");
+                cdrSubLbl.preferredSize.width = 150;
+                var cdrSubInp = cdrSubRow.add("edittext", undefined, String(mergeTarget[f.sub.valueKey]));
+                cdrSubInp.preferredSize.width = 60;
+                cdrSubRow.add("statictext", undefined, "pt");
+                cdrSubRow.visible = false;
+
+                (function (thisCb, thisSubRow) {
+                    thisCb.onClick = function () {
+                        thisSubRow.visible = thisCb.value;
+                        adjDlg.layout.resize();
+                        updateAdjMergeBtn();
+                    };
+                })(cdrCb, cdrSubRow);
+
+                adjFldCtrls.push({ cb: cdrCb, inputs: [cdrMain], subInputs: [cdrSubInp], field: f });
+                continue;
+            }
+
             if (f.type === "colWidths") {
                 var cwHdrGrp = adjPropSec.add("group");
                 cwHdrGrp.alignChildren = ["left", "center"];
@@ -352,6 +388,12 @@
                         if (isNaN(cwv) || cwv <= 0) { alert("Column " + (cwvi + 1) + " width must be a positive number."); return; }
                     }
                 }
+                if (vfc.field.type === "countWithDefault") {
+                    var cdv = parseInt(vfc.inputs[0].text);
+                    if (isNaN(cdv) || cdv <= 0) { alert("\"" + vfc.field.label + "\" must be a positive whole number."); return; }
+                    var sdv = parseFloat(vfc.subInputs[0].text);
+                    if (isNaN(sdv) || sdv <= 0) { alert("\"" + vfc.field.sub.label + "\" must be a positive number."); return; }
+                }
                 if (vfc.field.styleCollection) {
                     var sname = vfc.inputs[0].text;
                     var scoll = vfc.field.styleCollection();
@@ -370,6 +412,10 @@
                     for (var cwwi = 0; cwwi < wfc.inputs.length; cwwi++) {
                         mergeTarget[wfc.field.valueKey][cwwi] = parseFloat(wfc.inputs[cwwi].text);
                     }
+                }
+                if (wfc.field.type === "countWithDefault") {
+                    mergeTarget[wfc.field.valueKey]      = wfc.inputs[0].text;
+                    mergeTarget[wfc.field.sub.valueKey]  = wfc.subInputs[0].text;
                 }
             }
             adjConfirmed = true;
@@ -492,25 +538,13 @@
                 var current = getSelectedIndices(lb);
                 if (current.length === 0) return;
 
-                // Identify which selected items are actually deviants
-                var deviants = [];
-                for (var di = 0; di < current.length; di++) {
-                    var m = matches[current[di]];
-                    if (m.dev && hasDev(m.dev)) deviants.push(current[di]);
-                }
+                // Stage 4: open Adjust Merge Targets dialog for all selected items
+                var selectedMatchObjs = [];
+                for (var si2 = 0; si2 < current.length; si2++) selectedMatchObjs.push(matches[current[si2]]);
+                if (!adjustAndConfirmFn(selectedMatchObjs)) return;
 
-                if (deviants.length === 0) {
-                    alert("All selected items are already exact matches.\nNo changes needed.");
-                    return;
-                }
-
-                // Stage 4: open Adjust Merge Targets dialog
-                var deviantMatchObjs = [];
-                for (var dmo = 0; dmo < deviants.length; dmo++) deviantMatchObjs.push(matches[deviants[dmo]]);
-                if (!adjustAndConfirmFn(deviantMatchObjs)) return;
-
-                // Store deviants for the while loop to write — then close
-                pendingMerge = deviants;
+                // Store selected indices for the while loop to write — then close
+                pendingMerge = current;
                 subset       = current;
                 action       = "merge";
                 listDlg.close();
@@ -1006,9 +1040,16 @@
         } catch (e) {}
         var tblColWidthsStr = tblColWidths.length ? tblColWidths.join(", ") + " pt" : "—";
 
+        var tblDefaultRowH = "14.173";
+        var tblDefaultColW = "56.693";
+        try { tblDefaultRowH = String(roundTo(table.rows[0].height, 3)); } catch (e) {}
+        try { tblDefaultColW = String(roundTo(table.columns[0].width, 3)); } catch (e) {}
+
         var mergeTargetTb = {
-            applyStyle:     false, style:     tblStyleRaw,
-            applyColWidths: false, colWidths: tblColWidths.slice()
+            applyStyle:       false, style:           tblStyleRaw,
+            applyColWidths:   false, colWidths:        tblColWidths.slice(),
+            applyRowCount:    false, targetRows:       tblRowsRaw,  defaultRowHeight: tblDefaultRowH,
+            applyColCount:    false, targetCols:       tblColsRaw,  defaultColWidth:  tblDefaultColW
         };
 
         var dlgT = new Window("dialog", "Selection Inspector");
@@ -1115,18 +1156,47 @@
             try {
                 var tblT = match.ref;
                 if (!tblT || !tblT.isValid) return;
+
+                // Structural changes first (row/col count) so column indices are stable
+                if (mergeTargetTb.applyRowCount) {
+                    try {
+                        var targetR = parseInt(mergeTargetTb.targetRows);
+                        var defH    = parseFloat(mergeTargetTb.defaultRowHeight);
+                        while (tblT.rows.length < targetR) {
+                            var nr = tblT.rows.add(LocationOptions.AT_END);
+                            try { nr.height = defH; } catch (e2) {}
+                        }
+                        while (tblT.rows.length > targetR) {
+                            tblT.rows[tblT.rows.length - 1].remove();
+                        }
+                    } catch (e3) {
+                        alert("Could not adjust rows on p." + getTablePage(tblT) + ":\n" + e3.message);
+                    }
+                }
+
+                if (mergeTargetTb.applyColCount) {
+                    try {
+                        var targetC = parseInt(mergeTargetTb.targetCols);
+                        var defW    = parseFloat(mergeTargetTb.defaultColWidth);
+                        while (tblT.columns.length < targetC) {
+                            var nc = tblT.columns.add(LocationOptions.AT_END);
+                            try { nc.width = defW; } catch (e4) {}
+                        }
+                        while (tblT.columns.length > targetC) {
+                            tblT.columns[tblT.columns.length - 1].remove();
+                        }
+                    } catch (e5) {
+                        alert("Could not adjust columns on p." + getTablePage(tblT) + ":\n" + e5.message);
+                    }
+                }
+
                 if (mergeTargetTb.applyColWidths) {
                     var cols = tblT.columns;
                     for (var cwmi = 0; cwmi < mergeTargetTb.colWidths.length && cwmi < cols.length; cwmi++) {
                         cols[cwmi].width = parseFloat(mergeTargetTb.colWidths[cwmi]);
                     }
-                    if (match.dev.colWidths) {
-                        for (var cwzi = 0; cwzi < match.dev.colWidths.length; cwzi++) match.dev.colWidths[cwzi] = 0;
-                    } else {
-                        match.dev.colWidths = [];
-                        for (var cwni = 0; cwni < mergeTargetTb.colWidths.length; cwni++) match.dev.colWidths.push(0);
-                    }
                 }
+
                 if (mergeTargetTb.applyStyle) {
                     var targetTS = null;
                     var allTS = doc.allTableStyles;
@@ -1135,18 +1205,73 @@
                     }
                     if (targetTS && targetTS.isValid) {
                         tblT.appliedTableStyle = targetTS;
-                        match.dev.styleDeviation = "";
                     }
                 }
-                match.entry = match.baseEntry + buildDevFlag(match.dev);
+
+                // Rebuild entry from live values — structural changes invalidate old dev arithmetic
+                match.baseEntry = "p." + getTablePage(tblT) + "  —  " +
+                    tblT.rows.length + "×" + tblT.columns.length +
+                    "  [" + safeStr(function () { return tblT.appliedTableStyle.name; }) + "]";
+                match.dev   = {};
+                match.entry = match.baseEntry;
             } catch (e) {}
         }
 
         var adjFieldsTb = [
-            { applyKey: "applyStyle",     valueKey: "style",     label: "Table Style",    unit: "",   type: "string",    devKey: "styleDeviation", styleCollection: function () { return doc.allTableStyles; }, enabled: true },
-            { applyKey: "applyColWidths", valueKey: "colWidths", label: "Column Widths",  unit: "pt", type: "colWidths", devKey: "colWidths",       enabled: tblColWidths.length > 0 }
+            { applyKey: "applyStyle",     valueKey: "style",      label: "Table Style",         unit: "",     type: "string",           devKey: "styleDeviation", styleCollection: function () { return doc.allTableStyles; }, enabled: true },
+            { applyKey: "applyColWidths", valueKey: "colWidths",  label: "Column Widths",        unit: "pt",   type: "colWidths",        devKey: "colWidths",      enabled: tblColWidths.length > 0 },
+            { applyKey: "applyRowCount",  valueKey: "targetRows", label: "Target Row Count",     unit: "rows", type: "countWithDefault", devKey: null,             enabled: true,
+              sub: { valueKey: "defaultRowHeight", label: "Default row height" } },
+            { applyKey: "applyColCount",  valueKey: "targetCols", label: "Target Column Count",  unit: "cols", type: "countWithDefault", devKey: null,             enabled: true,
+              sub: { valueKey: "defaultColWidth",  label: "Default column width" } }
         ];
-        function tableAdjustFn(devMatches) { return buildAdjustDialog(mergeTargetTb, adjFieldsTb, devMatches); }
+        function tableAdjustFn(selMatches) {
+            if (!buildAdjustDialog(mergeTargetTb, adjFieldsTb, selMatches)) return false;
+
+            // Pre-flight: collect tables that would lose rows or columns
+            var destructive = [];
+            for (var pfi = 0; pfi < selMatches.length; pfi++) {
+                var pt = selMatches[pfi].ref;
+                if (!pt || !pt.isValid) continue;
+                var pfMsgs = [];
+                if (mergeTargetTb.applyRowCount) {
+                    var tr = parseInt(mergeTargetTb.targetRows);
+                    if (!isNaN(tr) && pt.rows.length > tr)
+                        pfMsgs.push("remove " + (pt.rows.length - tr) + " row(s)");
+                }
+                if (mergeTargetTb.applyColCount) {
+                    var tc = parseInt(mergeTargetTb.targetCols);
+                    if (!isNaN(tc) && pt.columns.length > tc)
+                        pfMsgs.push("remove " + (pt.columns.length - tc) + " col(s)");
+                }
+                if (pfMsgs.length > 0)
+                    destructive.push("p." + getTablePage(pt) + ": " + pfMsgs.join(", "));
+            }
+
+            if (destructive.length === 0) return true;
+
+            // Custom Yes/No warning dialog
+            var wDlg = new Window("dialog", "Confirm Destructive Changes");
+            wDlg.alignChildren = ["fill", "top"];
+            wDlg.margins = 18;
+            wDlg.spacing = 10;
+            wDlg.preferredSize.width = 400;
+            wDlg.add("statictext", undefined, "The following tables will have content permanently deleted:");
+            var wList = wDlg.add("listbox", undefined, destructive);
+            wList.preferredSize = [380, Math.min(destructive.length * 22 + 10, 160)];
+            var wNote = wDlg.add("statictext", undefined, "This cannot be undone within this merge operation.");
+            wNote.graphics.foregroundColor = wNote.graphics.newPen(wNote.graphics.PenType.SOLID_COLOR, [0.7, 0, 0, 1], 1);
+            var wBtns = wDlg.add("group");
+            wBtns.alignment = "right";
+            wBtns.spacing = 8;
+            var wProceed = false;
+            var wYes = wBtns.add("button", undefined, "Proceed");
+            var wNo  = wBtns.add("button", undefined, "Cancel");
+            wYes.onClick = function () { wProceed = true;  wDlg.close(); };
+            wNo.onClick  = function () { wProceed = false; wDlg.close(); };
+            wDlg.show();
+            return wProceed;
+        }
 
         app.doScript(
             function () { runStepThrough(matchesT, navToTable, "tables", tableMergeFn, tableAdjustFn); },
