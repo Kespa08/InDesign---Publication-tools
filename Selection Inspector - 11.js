@@ -156,6 +156,7 @@
             if (!page || !page.isValid) return;
             app.activeWindow.activePage = page;
             para.select();
+            try { app.activeWindow.zoom(ZoomOptions.FIT_PAGE); } catch (e2) {}
         } catch (e) {}
     }
 
@@ -165,6 +166,7 @@
             if (!page || !page.isValid) return;
             app.activeWindow.activePage = page;
             app.select(item);
+            try { app.activeWindow.zoom(ZoomOptions.FIT_PAGE); } catch (e2) {}
         } catch (e) {}
     }
 
@@ -184,6 +186,7 @@
                 } catch (e) {}
             }
             app.select(cell);
+            try { app.activeWindow.zoom(ZoomOptions.FIT_PAGE); } catch (e2) {}
         } catch (e) {}
     }
 
@@ -193,6 +196,7 @@
             while (fr && fr.constructor && fr.constructor.name !== "TextFrame") fr = fr.parent;
             if (fr && fr.parentPage) app.activeWindow.activePage = fr.parentPage;
             app.select(tbl);
+            try { app.activeWindow.zoom(ZoomOptions.FIT_PAGE); } catch (e2) {}
         } catch (e) {}
     }
 
@@ -286,6 +290,7 @@
                 (function (thisCb, thisSubRow) {
                     thisCb.onClick = function () {
                         thisSubRow.visible = thisCb.value;
+                        adjDlg.layout.layout(true);
                         adjDlg.layout.resize();
                         updateAdjMergeBtn();
                     };
@@ -365,7 +370,12 @@
             adjMergeBtn.enabled = any;
         }
         for (var adjCbi = 0; adjCbi < allAdjCbs.length; adjCbi++) {
-            (function (thisCb) { thisCb.onClick = function () { updateAdjMergeBtn(); }; })(allAdjCbs[adjCbi]);
+            (function (thisCb) {
+                // Skip checkboxes that already have a custom onClick (e.g. countWithDefault)
+                if (!thisCb.onClick) {
+                    thisCb.onClick = function () { updateAdjMergeBtn(); };
+                }
+            })(allAdjCbs[adjCbi]);
         }
         updateAdjMergeBtn();
 
@@ -560,6 +570,8 @@
             if (action === "navigate") {
                 // Engine context — navigation works here
                 navFn(matches[subset[subsetCursor]].ref);
+                try { app.redraw(); } catch (e2) {}
+                $.sleep(500); // Brief pause so viewport is visible before dialog reopens
             } else if (action === "merge") {
                 // Engine context — document writes work here
                 for (var mi = 0; mi < pendingMerge.length; mi++) {
@@ -1164,6 +1176,7 @@
                         var defH    = parseFloat(mergeTargetTb.defaultRowHeight);
                         while (tblT.rows.length < targetR) {
                             var nr = tblT.rows.add(LocationOptions.AT_END);
+                            try { nr.autoGrow = false; } catch (e2) {}
                             try { nr.height = defH; } catch (e2) {}
                         }
                         while (tblT.rows.length > targetR) {
