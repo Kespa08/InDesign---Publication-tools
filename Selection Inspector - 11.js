@@ -190,6 +190,23 @@
         } catch (e) {}
     }
 
+    // ── Keyword find/change helper ───────────────────────────────────────────
+
+    function applyKeywordReplace(obj, findStr, replaceStr) {
+        try {
+            app.findTextPreferences = NothingEnum.nothing;
+            app.changeTextPreferences = NothingEnum.nothing;
+            app.findTextPreferences.findWhat = findStr;
+            app.findTextPreferences.caseSensitive = false;
+            app.changeTextPreferences.changeTo = replaceStr;
+            try { obj.changeText(); } catch (e2) {}
+        } catch (e) {}
+        try {
+            app.findTextPreferences = NothingEnum.nothing;
+            app.changeTextPreferences = NothingEnum.nothing;
+        } catch (e3) {}
+    }
+
     // ── Listbox helpers ──────────────────────────────────────────────────────
 
     function getSelectedIndices(lb) {
@@ -287,6 +304,21 @@
                 })(cdrCb, cdrSubRow);
 
                 adjFldCtrls.push({ cb: cdrCb, inputs: [cdrMain], subInputs: [cdrSubInp], field: f });
+                continue;
+            }
+
+            if (f.type === "keywordReplace") {
+                var kwrGrp = adjPropSec.add("group");
+                kwrGrp.alignChildren = ["left", "center"];
+                kwrGrp.spacing = 8;
+                var kwrCb = kwrGrp.add("checkbox", undefined, "");
+                kwrCb.value = false;
+                allAdjCbs.push(kwrCb);
+                var kwrLbl = kwrGrp.add("statictext", undefined, "Replace \"" + f.keyword + "\" with:");
+                kwrLbl.preferredSize.width = 200;
+                var kwrInp = kwrGrp.add("edittext", undefined, "");
+                kwrInp.preferredSize.width = 130;
+                adjFldCtrls.push({ cb: kwrCb, inputs: [kwrInp], subInputs: [], field: f });
                 continue;
             }
 
@@ -416,6 +448,9 @@
                 if (wfc.field.type === "countWithDefault") {
                     mergeTarget[wfc.field.valueKey]      = wfc.inputs[0].text;
                     mergeTarget[wfc.field.sub.valueKey]  = wfc.subInputs[0].text;
+                }
+                if (wfc.field.type === "keywordReplace") {
+                    mergeTarget[wfc.field.valueKey] = wfc.inputs[0].text;
                 }
             }
             adjConfirmed = true;
@@ -646,6 +681,13 @@
         var cbFontSize  = rFontSize.cb; var tolFontSize = rFontSize.tol;
         var cbLeading   = rLeading.cb;  var tolLeading  = rLeading.tol;
         var cbTracking  = rTracking.cb; var tolTracking = rTracking.tol;
+        var kwRowTx = propSec.add("group");
+        kwRowTx.alignChildren = ["left", "center"];
+        kwRowTx.spacing = 8;
+        var cbKeyword = kwRowTx.add("checkbox", undefined, "Contains:");
+        cbKeyword.preferredSize.width = 90;
+        var kwInput = kwRowTx.add("edittext", undefined, "");
+        kwInput.preferredSize.width = 200;
 
         var btnGrp = dlg.add("group");
         btnGrp.alignment = "right";
@@ -655,7 +697,8 @@
 
         var matchRequested = false;
         matchBtn.onClick = function () {
-            if (!cbParaStyle.value && !cbFontSize.value && !cbLeading.value && !cbTracking.value) {
+            if (!cbParaStyle.value && !cbFontSize.value && !cbLeading.value && !cbTracking.value &&
+                    !(cbKeyword.value && kwInput.text !== "")) {
                 alert("Please select at least one property to match against.");
                 return;
             }
@@ -669,6 +712,12 @@
         var tfTolV = parseFloat(tolFontSize.text) || 0;
         var ldTolV = parseFloat(tolLeading.text)  || 0;
         var trTolV = parseFloat(tolTracking.text) || 0;
+        var kwEnabled = cbKeyword.value && kwInput.text !== "";
+        var kwStr = kwEnabled ? kwInput.text : "";
+
+        mergeTargetTx.applyKeyword = false;
+        mergeTargetTx.keyword = kwStr;
+        mergeTargetTx.keywordReplacement = "";
 
         var activeProps = [];
         if (cbParaStyle.value) activeProps.push("Style: " + paraStyleRaw);
@@ -681,6 +730,7 @@
         if (cbTracking.value)  activeProps.push(trTolV > 0
             ? "Tracking: " + trackingRaw + " \u00b1 " + trTolV + " \u2192 " + roundTo(parseFloat(trackingRaw) - trTolV, 2) + "\u2013" + roundTo(parseFloat(trackingRaw) + trTolV, 2)
             : "Tracking: " + trackingRaw);
+        if (kwEnabled) activeProps.push("Keyword: \"" + kwStr + "\"");
 
         function paraMatchesFilters(tp) {
             try {
@@ -731,6 +781,9 @@
                         match.dev.styleDeviation = "";
                     }
                 }
+                if (mergeTargetTx.applyKeyword && mergeTargetTx.keyword) {
+                    applyKeywordReplace(tp, mergeTargetTx.keyword, mergeTargetTx.keywordReplacement);
+                }
                 match.entry = match.baseEntry + buildDevFlag(match.dev);
             } catch (e) {}
         }
@@ -746,6 +799,9 @@
                             var tp = paras[pi];
                             var dev = paraMatchesFilters(tp);
                             if (!dev) continue;
+                            if (kwEnabled) {
+                                try { if (tp.contents.toLowerCase().indexOf(kwStr.toLowerCase()) === -1) continue; } catch (e2) { continue; }
+                            }
                             var baseE = "p." + getParaPage(tp) + "  \u2014  \"" + trunc(tp.contents, 40) + "\"";
                             matches.push({
                                 ref: tp, baseEntry: baseE,
@@ -769,6 +825,9 @@
                                                     var cp   = cellParas[cpi];
                                                     var devC = paraMatchesFilters(cp);
                                                     if (!devC) continue;
+                                                    if (kwEnabled) {
+                                                        try { if (cp.contents.toLowerCase().indexOf(kwStr.toLowerCase()) === -1) continue; } catch (e3) { continue; }
+                                                    }
                                                     var baseCE = "p." + getParaPage(cp) + "  \u2014  [Table]  \"" + trunc(cp.contents, 35) + "\"";
                                                     matches.push({
                                                         ref: cp, baseEntry: baseCE,
@@ -795,6 +854,7 @@
             { applyKey: "applyLeading",  valueKey: "leading",  label: "Leading",          unit: "pt", type: "number", devKey: "leading",         minValue: null,  enabled: true },
             { applyKey: "applyTracking", valueKey: "tracking", label: "Tracking",         unit: "u",  type: "number", devKey: "tracking",        minValue: null,  enabled: true }
         ];
+        if (kwEnabled) adjFieldsTx.push({ applyKey: "applyKeyword", valueKey: "keywordReplacement", label: "Keyword replacement", type: "keywordReplace", keyword: kwStr, enabled: true });
         function textAdjustFn(devMatches) { return buildAdjustDialog(mergeTargetTx, adjFieldsTx, devMatches); }
 
         app.doScript(
@@ -864,6 +924,13 @@
         var cbCellInsets = addCheckRow(cellPropSec,     "Insets  [" + cellInsetsStr + "]");
         var cbCellH = rCellH.cb; var tolCellH = rCellH.tol;
         var cbCellW = rCellW.cb; var tolCellW = rCellW.tol;
+        var kwRowC = cellPropSec.add("group");
+        kwRowC.alignChildren = ["left", "center"];
+        kwRowC.spacing = 8;
+        var cbKeywordC = kwRowC.add("checkbox", undefined, "Contains:");
+        cbKeywordC.preferredSize.width = 90;
+        var kwInputC = kwRowC.add("edittext", undefined, "");
+        kwInputC.preferredSize.width = 200;
 
         var btnGrpC = dlgC.add("group");
         btnGrpC.alignment = "right";
@@ -873,7 +940,8 @@
 
         var matchRequestedC = false;
         matchBtnC.onClick = function () {
-            if (!cbCellStyle.value && !cbCellH.value && !cbCellW.value && !cbCellInsets.value) {
+            if (!cbCellStyle.value && !cbCellH.value && !cbCellW.value && !cbCellInsets.value &&
+                    !(cbKeywordC.value && kwInputC.text !== "")) {
                 alert("Please select at least one property to match against.");
                 return;
             }
@@ -886,6 +954,11 @@
 
         var chTolV = parseFloat(tolCellH.text) || 0;
         var cwTolV = parseFloat(tolCellW.text) || 0;
+        var kwEnabledC = cbKeywordC.value && kwInputC.text !== "";
+        var kwStrC = kwEnabledC ? kwInputC.text : "";
+        mergeTargetC.applyKeyword = false;
+        mergeTargetC.keyword = kwStrC;
+        mergeTargetC.keywordReplacement = "";
 
         var activePropsC = [];
         if (cbCellStyle.value)  activePropsC.push("Cell Style: " + cellStyleRaw);
@@ -896,6 +969,7 @@
             ? "Width: " + cellWRaw + " pt \u00b1 " + cwTolV + " pt \u2192 " + roundTo(parseFloat(cellWRaw) - cwTolV, 2) + "\u2013" + roundTo(parseFloat(cellWRaw) + cwTolV, 2) + " pt"
             : "Width: " + cellWRaw + " pt");
         if (cbCellInsets.value) activePropsC.push("Insets: [" + cellInsetsStr + "]");
+        if (kwEnabledC) activePropsC.push("Keyword: \"" + kwStrC + "\"");
 
         function cellMergeFn(match) {
             try {
@@ -913,6 +987,9 @@
                         cand.appliedCellStyle = targetCS;
                         match.dev.styleDeviation = "";
                     }
+                }
+                if (mergeTargetC.applyKeyword && mergeTargetC.keyword) {
+                    applyKeywordReplace(cand, mergeTargetC.keyword, mergeTargetC.keywordReplacement);
                 }
                 match.entry = match.baseEntry + buildDevFlag(match.dev);
             } catch (e) {}
@@ -952,6 +1029,9 @@
                                                 if (roundTo(cand.rightInset,  3) !== parseFloat(cellRightRaw)) continue;
                                                 if (roundTo(cand.bottomInset, 3) !== parseFloat(cellBotRaw))   continue;
                                             }
+                                            if (kwEnabledC) {
+                                                try { if (cand.contents.toLowerCase().indexOf(kwStrC.toLowerCase()) === -1) continue; } catch (e2) { continue; }
+                                            }
                                             var devCObj = {};
                                             if (cbCellH.value) devCObj.cellHeight = devCH;
                                             if (cbCellW.value) devCObj.cellWidth  = devCW;
@@ -987,6 +1067,7 @@
             { applyKey: "applyHeight", valueKey: "height", label: "Height",     unit: "pt", type: "number", devKey: "cellHeight",      minValue: 0,     enabled: true },
             { applyKey: "applyWidth",  valueKey: "width",  label: "Width",      unit: "pt", type: "number", devKey: "cellWidth",       minValue: 0,     enabled: true }
         ];
+        if (kwEnabledC) adjFieldsC.push({ applyKey: "applyKeyword", valueKey: "keywordReplacement", label: "Keyword replacement", type: "keywordReplace", keyword: kwStrC, enabled: true });
         function cellAdjustFn(devMatches) { return buildAdjustDialog(mergeTargetC, adjFieldsC, devMatches); }
 
         app.doScript(
@@ -1047,6 +1128,13 @@
         var rColWidths  = addToleranceRow(tblPropSec, "Column Widths  [" + tblColWidthsStr + "]", "pt");
         var cbColWidths = rColWidths.cb; var tolColWidths = rColWidths.tol;
         cbColWidths.enabled = (tblColWidths.length > 0);
+        var kwRowT = tblPropSec.add("group");
+        kwRowT.alignChildren = ["left", "center"];
+        kwRowT.spacing = 8;
+        var cbKeywordT = kwRowT.add("checkbox", undefined, "Contains:");
+        cbKeywordT.preferredSize.width = 90;
+        var kwInputT = kwRowT.add("edittext", undefined, "");
+        kwInputT.preferredSize.width = 200;
 
         var btnGrpT = dlgT.add("group");
         btnGrpT.alignment = "right";
@@ -1056,7 +1144,8 @@
 
         var matchRequestedT = false;
         matchBtnT.onClick = function () {
-            if (!cbTblStyle.value && !cbTblRows.value && !cbTblCols.value && !cbColWidths.value) {
+            if (!cbTblStyle.value && !cbTblRows.value && !cbTblCols.value && !cbColWidths.value &&
+                    !(cbKeywordT.value && kwInputT.text !== "")) {
                 alert("Please select at least one property to match against.");
                 return;
             }
@@ -1068,6 +1157,11 @@
         if (!matchRequestedT) return;
 
         var cwTolV = parseFloat(tolColWidths.text) || 0;
+        var kwEnabledT = cbKeywordT.value && kwInputT.text !== "";
+        var kwStrT = kwEnabledT ? kwInputT.text : "";
+        mergeTargetTb.applyKeyword = false;
+        mergeTargetTb.keyword = kwStrT;
+        mergeTargetTb.keywordReplacement = "";
 
         var activePropsT = [];
         if (cbTblStyle.value)  activePropsT.push("Table Style: " + tblStyleRaw);
@@ -1076,6 +1170,7 @@
         if (cbColWidths.value && tblColWidths.length > 0) activePropsT.push(cwTolV > 0
             ? "Column Widths: [" + tblColWidthsStr + "] ± " + cwTolV + " pt"
             : "Column Widths: [" + tblColWidthsStr + "]");
+        if (kwEnabledT) activePropsT.push("Keyword: \"" + kwStrT + "\"");
 
         var matchesT = [];
         try {
@@ -1099,6 +1194,20 @@
                                     }
                                 }
                                 if (!cwOk) continue;
+                            }
+                            if (kwEnabledT) {
+                                var kwFoundT = false;
+                                var kwLowT = kwStrT.toLowerCase();
+                                try {
+                                    var kwCellsT = tblT.cells;
+                                    for (var kwciT = 0; kwciT < kwCellsT.length; kwciT++) {
+                                        try {
+                                            var kwTxtT = kwCellsT[kwciT].contents;
+                                            if (typeof kwTxtT === "string" && kwTxtT.toLowerCase().indexOf(kwLowT) !== -1) { kwFoundT = true; break; }
+                                        } catch (e2) {}
+                                    }
+                                } catch (e3) {}
+                                if (!kwFoundT) continue;
                             }
                             var baseTbE = "p." + getTablePage(tblT) + "  \u2014  " + tblT.rows.length + "\u00d7" + tblT.columns.length + "  [" + tblT.appliedTableStyle.name + "]";
                             var devTbl = {};
@@ -1185,6 +1294,10 @@
                     }
                 }
 
+                if (mergeTargetTb.applyKeyword && mergeTargetTb.keyword) {
+                    applyKeywordReplace(tblT, mergeTargetTb.keyword, mergeTargetTb.keywordReplacement);
+                }
+
                 // Rebuild entry from live values — structural changes invalidate old dev arithmetic
                 match.baseEntry = "p." + getTablePage(tblT) + "  —  " +
                     tblT.rows.length + "×" + tblT.columns.length +
@@ -1202,6 +1315,7 @@
             { applyKey: "applyColCount",  valueKey: "targetCols", label: "Target Column Count",  unit: "cols", type: "countWithDefault", devKey: null,             enabled: true,
               sub: { valueKey: "defaultColWidth",  label: "Default column width" } }
         ];
+        if (kwEnabledT) adjFieldsTb.push({ applyKey: "applyKeyword", valueKey: "keywordReplacement", label: "Keyword replacement", type: "keywordReplace", keyword: kwStrT, enabled: true });
         function tableAdjustFn(selMatches) {
             if (!buildAdjustDialog(mergeTargetTb, adjFieldsTb, selMatches)) return false;
 
@@ -1322,6 +1436,13 @@
     // Disable baseline checkboxes if values were not accessible on this frame
     cbBaselineOff.enabled = (rawBaselineOffset !== null);
     cbBaselineMin.enabled = (rawBaselineMin    !== null);
+    var kwRowF = propSec2.add("group");
+    kwRowF.alignChildren = ["left", "center"];
+    kwRowF.spacing = 8;
+    var cbKeywordF = kwRowF.add("checkbox", undefined, "Contains:");
+    cbKeywordF.preferredSize.width = 90;
+    var kwInputF = kwRowF.add("edittext", undefined, "");
+    kwInputF.preferredSize.width = 200;
 
     var btnGrp2 = dlg2.add("group");
     btnGrp2.alignment = "right";
@@ -1332,7 +1453,8 @@
     var matchRequested2 = false;
     matchBtn2.onClick = function () {
         if (!cbObjStyle.value && !cbWidth.value && !cbHeight.value &&
-            !cbBaselineOff.value && !cbBaselineMin.value) {
+            !cbBaselineOff.value && !cbBaselineMin.value &&
+            !(cbKeywordF.value && kwInputF.text !== "")) {
             alert("Please select at least one property to match against.");
             return;
         }
@@ -1346,6 +1468,11 @@
     var wTolV      = parseFloat(tolWidth.text)       || 0;
     var hTolV      = parseFloat(tolHeight.text)      || 0;
     var bmTolV     = parseFloat(tolBaselineMin.text) || 0;
+    var kwEnabledF = cbKeywordF.value && kwInputF.text !== "";
+    var kwStrF = kwEnabledF ? kwInputF.text : "";
+    mergeTargetF.applyKeyword = false;
+    mergeTargetF.keyword = kwStrF;
+    mergeTargetF.keywordReplacement = "";
 
     var activeProps2 = [];
     if (cbObjStyle.value)    activeProps2.push("Object Style: " + objStyle);
@@ -1359,6 +1486,7 @@
     if (cbBaselineMin.value) activeProps2.push(bmTolV > 0
         ? "Baseline Minimum: " + rawBaselineMinStr + " \u00b1 " + bmTolV + " pt \u2192 " + roundTo(rawBaselineMin - bmTolV, 2) + "\u2013" + roundTo(rawBaselineMin + bmTolV, 2) + " pt"
         : "Baseline Minimum: " + rawBaselineMinStr);
+    if (kwEnabledF) activeProps2.push("Keyword: \"" + kwStrF + "\"");
 
     function frameMergeFn(match) {
         try {
@@ -1392,6 +1520,9 @@
                     match.dev.styleDeviation = "";
                 }
             }
+            if (mergeTargetF.applyKeyword && mergeTargetF.keyword) {
+                applyKeywordReplace(item, mergeTargetF.keyword, mergeTargetF.keywordReplacement);
+            }
             match.entry = match.baseEntry + buildDevFlag(match.dev);
         } catch (e) {}
     }
@@ -1420,6 +1551,17 @@
                 if (cbBaselineMin.value && rawBaselineMin !== null) {
                     try { if (Math.abs(roundTo(item.textFramePreferences.minimumFirstBaselineOffset, 3) - rawBaselineMin) > bmTolV) continue; }
                     catch (e) { continue; }
+                }
+                if (kwEnabledF) {
+                    var kwFoundF = false;
+                    try {
+                        var kwStoryF = item.parentStory;
+                        if (kwStoryF && kwStoryF.isValid) {
+                            var kwTxtF = kwStoryF.contents;
+                            if (typeof kwTxtF === "string" && kwTxtF.toLowerCase().indexOf(kwStrF.toLowerCase()) !== -1) kwFoundF = true;
+                        }
+                    } catch (e2) {}
+                    if (!kwFoundF) continue;
                 }
                 var devF = {};
                 if (cbWidth.value)  devF.width  = roundTo(iw - rawW, 2);
@@ -1452,6 +1594,7 @@
         { applyKey: "applyBaseline",    valueKey: "baseline",    label: "Baseline Offset",  unit: "",   type: "enum",   devKey: null,             displayStr: rawBaselineOffsetStr, enabled: rawBaselineOffset !== null },
         { applyKey: "applyBaselineMin", valueKey: "baselineMin", label: "Baseline Minimum", unit: "pt", type: "number", devKey: null,             minValue: null, enabled: rawBaselineMin !== null }
     ];
+    if (kwEnabledF) adjFieldsF.push({ applyKey: "applyKeyword", valueKey: "keywordReplacement", label: "Keyword replacement", type: "keywordReplace", keyword: kwStrF, enabled: true });
     function frameAdjustFn(devMatches) { return buildAdjustDialog(mergeTargetF, adjFieldsF, devMatches); }
 
     app.doScript(
