@@ -448,19 +448,15 @@
         var subset       = [];
         var subsetCursor = -1;
         var navStarted   = false;
-        var keepGoing    = true;
 
-        while (keepGoing) {
+        var entryStrings = [];
+        for (var ei = 0; ei < matches.length; ei++) entryStrings.push(matches[ei].entry);
 
-            // Rebuild entry strings on every iteration so Merge updates are reflected
-            var entryStrings = [];
-            for (var ei = 0; ei < matches.length; ei++) entryStrings.push(matches[ei].entry);
-
-            var listDlg = new Window("dialog", "Match Results");
-            listDlg.alignChildren = ["fill", "top"];
-            listDlg.margins = 18;
-            listDlg.spacing = 10;
-            listDlg.preferredSize.width = 460;
+        var listDlg = new Window("dialog", "Match Results");
+        listDlg.alignChildren = ["fill", "top"];
+        listDlg.margins = 18;
+        listDlg.spacing = 10;
+        listDlg.preferredSize.width = 460;
 
             // ── Matched-on summary ───────────────────────────────────────────
             var hdrSec = listDlg.add("panel", undefined, "Matched on");
@@ -481,9 +477,10 @@
             var lb = listSec.add("listbox", undefined, entryStrings, { multiselect: true });
             lb.preferredSize = [420, 220];
 
-            if (subset.length > 0) restoreSelection(lb, subset);
+        var navLabel = listSec.add("statictext", undefined, "");
+        navLabel.alignment = ["right", "top"];
 
-            // ── Buttons ──────────────────────────────────────────────────────
+        // ── Buttons ──────────────────────────────────────────────────────
             var btnGrp = listDlg.add("group");
             btnGrp.alignment = "right";
             btnGrp.spacing = 8;
@@ -492,12 +489,11 @@
             var nextBtn  = btnGrp.add("button", undefined, "Next \u2192");
             var closeBtn = btnGrp.add("button", undefined, "Close");
 
-            // Merge disabled if no mergeFn (Table mode) or nothing selected
-            mergeBtn.enabled = (mergeFn !== null && subset.length > 0);
-            prevBtn.enabled  = (subset.length > 0);
-            nextBtn.enabled  = (subset.length > 0);
+        mergeBtn.enabled = false;
+        prevBtn.enabled  = false;
+        nextBtn.enabled  = false;
 
-            lb.onChange = function () {
+        lb.onChange = function () {
                 var newSel = getSelectedIndices(lb);
                 var hasNew = (newSel.length > 0);
                 nextBtn.enabled  = hasNew;
@@ -506,11 +502,7 @@
                 if (newSel.join(",") !== subset.join(",")) navStarted = false;
             };
 
-            var action        = "close";
-            var pendingMerge  = [];  // deviant indices to write — populated in onClick,
-                                     // consumed in the while loop (engine context)
-
-            nextBtn.onClick = function () {
+        nextBtn.onClick = function () {
                 var current = getSelectedIndices(lb);
                 if (current.length === 0) return;
                 if (!navStarted || current.join(",") !== subset.join(",")) {
@@ -518,8 +510,8 @@
                 } else {
                     subsetCursor = Math.min(subsetCursor + 1, subset.length - 1);
                 }
-                action = "navigate";
-                listDlg.close();
+                navFn(matches[subset[subsetCursor]].ref);
+                navLabel.text = "Showing " + (subsetCursor + 1) + " of " + subset.length;
             };
 
             prevBtn.onClick = function () {
@@ -530,8 +522,8 @@
                 } else {
                     subsetCursor = Math.max(subsetCursor - 1, 0);
                 }
-                action = "navigate";
-                listDlg.close();
+                navFn(matches[subset[subsetCursor]].ref);
+                navLabel.text = "Showing " + (subsetCursor + 1) + " of " + subset.length;
             };
 
             mergeBtn.onClick = function () {
@@ -542,34 +534,19 @@
                 var selectedMatchObjs = [];
                 for (var si2 = 0; si2 < current.length; si2++) selectedMatchObjs.push(matches[current[si2]]);
                 if (!adjustAndConfirmFn(selectedMatchObjs)) return;
-
-                // Store selected indices for the while loop to write — then close
-                pendingMerge = current;
-                subset       = current;
-                action       = "merge";
-                listDlg.close();
+                for (var mi = 0; mi < current.length; mi++) mergeFn(matches[current[mi]]);
+                subset = current;
+                lb.removeAll();
+                for (var ri = 0; ri < matches.length; ri++) lb.add("item", matches[ri].entry);
+                restoreSelection(lb, subset);
+                mergeBtn.enabled = false;
             };
 
-            closeBtn.onClick = function () {
-                action = "close";
-                listDlg.close();
-            };
+        closeBtn.onClick = function () {
+            listDlg.close();
+        };
 
-            listDlg.show();
-
-            if (action === "navigate") {
-                navFn(matches[subset[subsetCursor]].ref);
-            } else if (action === "merge") {
-                // Engine context — document writes work here
-                for (var mi = 0; mi < pendingMerge.length; mi++) {
-                    mergeFn(matches[pendingMerge[mi]]);
-                }
-                pendingMerge = [];
-                // Loop continues — entryStrings rebuilt at top with updated entries
-            } else {
-                keepGoing = false;
-            }
-        }
+        listDlg.show();
     }
 
     // ── Mode detection ───────────────────────────────────────────────────────
