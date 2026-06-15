@@ -193,18 +193,32 @@
     // ── Keyword find/change helper ───────────────────────────────────────────
 
     function applyKeywordReplace(obj, findStr, replaceStr) {
-        try {
-            app.findTextPreferences = NothingEnum.nothing;
-            app.changeTextPreferences = NothingEnum.nothing;
-            app.findTextPreferences.findWhat = findStr;
-            app.findTextPreferences.caseSensitive = false;
-            app.changeTextPreferences.changeTo = replaceStr;
-            try { obj.changeText(); } catch (e2) {}
-        } catch (e) {}
-        try {
-            app.findTextPreferences = NothingEnum.nothing;
-            app.changeTextPreferences = NothingEnum.nothing;
-        } catch (e3) {}
+        // Each preference line gets its own try/catch so a single failure
+        // doesn't silently abort everything that follows.
+        try { app.findTextPreferences  = NothingEnum.nothing;  } catch (e) {}
+        try { app.changeTextPreferences = NothingEnum.nothing; } catch (e) {}
+        try { app.findTextPreferences.findWhat  = findStr;     } catch (e) {}
+        try { app.findTextPreferences.caseSensitive = false;   } catch (e) {}
+        try { app.changeTextPreferences.changeTo = replaceStr; } catch (e) {}
+
+        // changeText() only exists on Text-range objects (Paragraph, Story…),
+        // NOT on Cell, Table, or TextFrame. Fall back through obj.texts[0]
+        // (Cell / TextFrame expose this), then through iterating cells (Table).
+        var called = false;
+        try { obj.changeText(); called = true; } catch (e) {}
+        if (!called) {
+            try { obj.texts[0].changeText(); called = true; } catch (e) {}
+        }
+        if (!called) {
+            try {
+                for (var ci = 0; ci < obj.cells.length; ci++) {
+                    try { obj.cells[ci].texts[0].changeText(); } catch (e) {}
+                }
+            } catch (e) {}
+        }
+
+        try { app.findTextPreferences  = NothingEnum.nothing;  } catch (e) {}
+        try { app.changeTextPreferences = NothingEnum.nothing; } catch (e) {}
     }
 
     // ── Listbox helpers ──────────────────────────────────────────────────────
