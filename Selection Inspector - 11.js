@@ -156,7 +156,7 @@
             if (!page || !page.isValid) return;
             app.activeWindow.activePage = page;
             para.select();
-            try { app.activeWindow.zoom(ZoomOptions.FIT_PAGE); } catch (e2) {}
+            try { app.activeWindow.zoom(ZoomOptions.fitPage); } catch (e2) {}
         } catch (e) {}
     }
 
@@ -166,27 +166,17 @@
             if (!page || !page.isValid) return;
             app.activeWindow.activePage = page;
             app.select(item);
-            try { app.activeWindow.zoom(ZoomOptions.FIT_PAGE); } catch (e2) {}
+            try { app.activeWindow.zoom(ZoomOptions.fitPage); } catch (e2) {}
         } catch (e) {}
     }
 
     function navToCell(cell) {
         try {
-            var stories = doc.stories;
-            for (var si = 0; si < stories.length; si++) {
-                try {
-                    var tbls = stories[si].tables;
-                    for (var ti = 0; ti < tbls.length; ti++) {
-                        if (tbls[ti].id === cell.parent.id) {
-                            var fr = tbls[ti].parent;
-                            while (fr && fr.constructor && fr.constructor.name !== "TextFrame") fr = fr.parent;
-                            if (fr && fr.parentPage) app.activeWindow.activePage = fr.parentPage;
-                        }
-                    }
-                } catch (e) {}
-            }
+            var fr = cell;
+            while (fr && fr.constructor && fr.constructor.name !== "TextFrame") fr = fr.parent;
+            if (fr && fr.parentPage) app.activeWindow.activePage = fr.parentPage;
             app.select(cell);
-            try { app.activeWindow.zoom(ZoomOptions.FIT_PAGE); } catch (e2) {}
+            try { app.activeWindow.zoom(ZoomOptions.fitPage); } catch (e2) {}
         } catch (e) {}
     }
 
@@ -196,7 +186,7 @@
             while (fr && fr.constructor && fr.constructor.name !== "TextFrame") fr = fr.parent;
             if (fr && fr.parentPage) app.activeWindow.activePage = fr.parentPage;
             app.select(tbl);
-            try { app.activeWindow.zoom(ZoomOptions.FIT_PAGE); } catch (e2) {}
+            try { app.activeWindow.zoom(ZoomOptions.fitPage); } catch (e2) {}
         } catch (e) {}
     }
 
@@ -568,10 +558,7 @@
             listDlg.show();
 
             if (action === "navigate") {
-                // Engine context — navigation works here
                 navFn(matches[subset[subsetCursor]].ref);
-                try { app.redraw(); } catch (e2) {}
-                $.sleep(500); // Brief pause so viewport is visible before dialog reopens
             } else if (action === "merge") {
                 // Engine context — document writes work here
                 for (var mi = 0; mi < pendingMerge.length; mi++) {
