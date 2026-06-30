@@ -18,9 +18,10 @@
             styleByName[allPS[sti].name] = allPS[sti];
         }
 
-        // Is this style name any bullet style (base OR "last" variant)?
+        // Is this style name any bullet/step style (base OR "last" variant)?
+        // Covers: "Bullet list N", "Step bullet N", "Step letter N" (and their " last" variants).
         function isBulletStyle(name) {
-            return /^Bullet list\s+\d+/i.test(name);
+            return /^(Bullet list|Step bullet|Step letter)\s+\d+/i.test(name);
         }
 
         // Does this style name end with " last"?
