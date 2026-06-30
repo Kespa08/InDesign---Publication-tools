@@ -8,6 +8,16 @@
 
         var doc = app.activeDocument;
 
+        // Build a flat name→style map from ALL paragraph styles regardless of group folder.
+        // doc.paragraphStyles only returns top-level styles; grouped styles (e.g. inside
+        // "Bullets, numbered lists") are invisible to it and itemByName returns an invalid
+        // dead object. doc.allParagraphStyles returns every style at every nesting depth.
+        var styleByName = {};
+        var allPS = doc.allParagraphStyles;
+        for (var sti = 0; sti < allPS.length; sti++) {
+            styleByName[allPS[sti].name] = allPS[sti];
+        }
+
         // Is this style name any bullet style (base OR "last" variant)?
         function isBulletStyle(name) {
             return /^Bullet list\s+\d+/i.test(name);
@@ -53,14 +63,14 @@
                 }
 
                 if (targetName !== styleName) {
-                    try {
-                        var targetStyle = doc.paragraphStyles.itemByName(targetName);
-                        if (targetStyle.isValid) {
+                    var targetStyle = styleByName[targetName];
+                    if (targetStyle && targetStyle.isValid) {
+                        try {
                             // false = preserve character-level overrides within the paragraph
                             para.applyParagraphStyle(targetStyle, false);
                             changes++;
-                        }
-                    } catch (e) {}
+                        } catch (e) {}
+                    }
                 }
             }
         }
