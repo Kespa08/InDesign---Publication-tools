@@ -7,6 +7,38 @@
     var styleChanges = 0;
     var headerChanges = 0;
     var rowChanges = 0;
+    var colWidthChanges = 0;
+
+    function roundTo(n, dec) {
+        var f = Math.pow(10, dec);
+        return Math.round(n * f) / f;
+    }
+
+    // The width of whatever directly contains the table: a Cell's width
+    // if the table is nested inside another table, or a TextFrame's raw
+    // geometric width if the table sits directly in the main text flow.
+    // Adapted from getTablePage() in "InDesign - Selection - Match and
+    // merge - 19.js", which walks the same parent chain but always
+    // continues past a Cell to reach a TextFrame; here we stop at
+    // whichever of the two is found first, since that's the table's
+    // immediate container.
+    function getContainerWidth(tbl) {
+        try {
+            var c = tbl.parent;
+            while (c && c.constructor &&
+                   c.constructor.name !== "Cell" &&
+                   c.constructor.name !== "TextFrame") {
+                c = c.parent;
+            }
+            if (!c) return null;
+            if (c.constructor.name === "Cell") return c.width;
+            if (c.constructor.name === "TextFrame") {
+                var b = c.geometricBounds;
+                return b[3] - b[1];
+            }
+        } catch (e) {}
+        return null;
+    }
 
     // Resolve the target style once, up front — this is a document-level
     // question, not a per-table one, so it only needs asking once.
@@ -108,6 +140,24 @@
                     }
                 }
             } catch (e) {}
+
+            // All columns become equal width, sized to fill the table's
+            // immediate container. Rounded to 3 decimal places before
+            // comparing, so floating-point noise doesn't register as a
+            // change on every re-run.
+            try {
+                var containerWidth = getContainerWidth(tbl);
+                if (containerWidth !== null) {
+                    var cols = tbl.columns;
+                    var targetColWidth = roundTo(containerWidth / cols.length, 3);
+                    for (var ci = 0; ci < cols.length; ci++) {
+                        if (roundTo(cols[ci].width, 3) !== targetColWidth) {
+                            cols[ci].width = targetColWidth;
+                            colWidthChanges++;
+                        }
+                    }
+                }
+            } catch (e) {}
         }
 
     }, ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Fix Table Styles");
@@ -117,6 +167,7 @@
 
     alert("Done. " + styleChanges + " table style" + (styleChanges === 1 ? "" : "s") +
           ", " + headerChanges + " row" + (headerChanges === 1 ? "" : "s") + " converted to header" +
-          ", and " + rowChanges + " cell style" + (rowChanges === 1 ? "" : "s") + " corrected.");
+          ", " + rowChanges + " cell style" + (rowChanges === 1 ? "" : "s") +
+          ", and " + colWidthChanges + " column width" + (colWidthChanges === 1 ? "" : "s") + " corrected.");
 
 })();
