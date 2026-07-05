@@ -24,17 +24,18 @@
     // immediate container.
     function getContainerWidth(tbl) {
         try {
-            var c = tbl.parent;
-            while (c && c.constructor &&
-                   c.constructor.name !== "Cell" &&
-                   c.constructor.name !== "TextFrame") {
-                c = c.parent;
+            var cnt = tbl.parent;
+            var cntname = cnt.constructor.name
+            while (cnt && cnt.constructor &&
+                   cntname !== "Cell" &&
+                   cntname !== "TextFrame") {
+                cnt = cnt.parent;
             }
-            if (!c) return null;
-            if (c.constructor.name === "Cell") return c.width;
-            if (c.constructor.name === "TextFrame") {
-                var b = c.geometricBounds;
-                return b[3] - b[1];
+            if (!cnt) return null;
+            if (cntname === "Cell") return cnt.width;
+            if (cntname === "TextFrame") {
+                var b = cnt.geometricBounds;
+                return b[3] - b[1]; // b[0] = top, b[1] = left, b[2] = bottom, b[3] = right. Therefore b[3] - b[1] = Right bound - Left bound
             }
         } catch (e) {}
         return null;
