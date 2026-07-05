@@ -8,7 +8,8 @@
     // question, not a per-table one, so it only needs asking once.
     var targetStyle = null; // Construct a semantic object "target style" by declaring it as a variable and assigning null – the absence of a value. 
     var allTS = doc.allTableStyles; // Construct a semantic object that references all table styles in the active document. 
-    
+
+    // # SEARCH FUNCTION: DOC - STYLES - TABLES + CELLS 
     // Construct a for loop that iterates over all elements within the array allTS {TS_1, TS_2... TS_n}
     // If one such element in the array TS_[i] corresponds to the value assigned to STYLE_NAME, such that TS_[i].name === "Table" => 
     // assign tagetStyle to the relevant tableStyle object && Break the loop, such that targetStyle := TS_[i].name.
