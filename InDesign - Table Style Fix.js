@@ -96,12 +96,11 @@
                 for (var r = 0; r < rows.length; r++) {
                     var isHeaderRow  = (r === 0);
                     var targetCS     = isHeaderRow ? headerStyle : bodyStyle;
-                    var targetCSName = isHeaderRow ? HEADER_STYLE_NAME : BODY_STYLE_NAME;
-
+                    
                     var rowCells = rows[r].cells;
                     for (var rc = 0; rc < rowCells.length; rc++) {
                         try {
-                            if (rowCells[rc].appliedCellStyle.name !== targetCSName) {
+                            if (rowCells[rc].appliedCellStyle !== targetCS) {
                                 rowCells[rc].appliedCellStyle = targetCS;
                                 rowChanges++;
                             }
