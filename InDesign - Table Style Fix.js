@@ -5,6 +5,7 @@
     var HEADER_STYLE_NAME = "Header";
     var BODY_STYLE_NAME = "Body";
     var styleChanges = 0;
+    var headerChanges = 0;
     var rowChanges = 0;
 
     // Resolve the target style once, up front — this is a document-level
@@ -82,14 +83,16 @@
             } catch (e) {}
 
             // First row becomes the header row; every other row is body.
-            // A table with a header region already set (headerRowCount >= 1)
-            // is treated as conformant and left alone.
+            // rowType converts the existing row in place — unlike
+            // headerRowCount, which inserts a brand new row instead of
+            // reclassifying row 0. A row already marked HEADER_ROW is
+            // treated as conformant and left alone.
             try {
-                if (tbl.headerRowCount === 0) {
-                    tbl.headerRowCount = 1;
+                var rows = tbl.rows;
+                if (rows.length > 0 && rows[0].rowType !== RowTypes.HEADER_ROW) {
+                    try { rows[0].rowType = RowTypes.HEADER_ROW; headerChanges++; } catch (e) {}
                 }
 
-                var rows = tbl.rows;
                 for (var r = 0; r < rows.length; r++) {
                     var isHeaderRow  = (r === 0);
                     var targetCS     = isHeaderRow ? headerStyle : bodyStyle;
@@ -114,6 +117,7 @@
     // "Fix table styles" = what is displayed in InDesign's undo history
 
     alert("Done. " + styleChanges + " table style" + (styleChanges === 1 ? "" : "s") +
-          " and " + rowChanges + " row style" + (rowChanges === 1 ? "" : "s") + " corrected.");
+          ", " + headerChanges + " row" + (headerChanges === 1 ? "" : "s") + " converted to header" +
+          ", and " + rowChanges + " cell style" + (rowChanges === 1 ? "" : "s") + " corrected.");
 
 })();
