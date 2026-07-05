@@ -12,6 +12,7 @@
     var targetStyle = null; // Construct a semantic object "target style" by declaring it as a variable and assigning null – the absence of a value.
     var allTS = doc.allTableStyles; // Construct a semantic object that references all table styles in the active document.
 
+    // # SEARCH FUNCTION: DOC.STYLES - TABLES
     // Construct a for loop that iterates over all elements within the array allTS {TS_1, TS_2... TS_n}
     // If one such element in the array TS_[i] corresponds to the value assigned to STYLE_NAME, such that TS_[i].name === "Table" =>
     // assign tagetStyle to the relevant tableStyle object && Break the loop, such that targetStyle := TS_[i].name.
@@ -25,12 +26,13 @@
         alert("Table style \"" + STYLE_NAME + "\" does not exist in this document.");
         return;
     }
-
+    
+    // # SEARCH FUNCTION: DOC.STYLES – CELLS
     var headerStyle = null, bodyStyle = null;
     var allCS = doc.allCellStyles;
     for (var j = 0; j < allCS.length; j++) {
-        if (allCS[j].name === HEADER_STYLE_NAME) headerStyle = allCS[j];
-        if (allCS[j].name === BODY_STYLE_NAME) bodyStyle = allCS[j];
+        if (allCS[j].name === HEADER_STYLE_NAME) headerStyle = allCS[j]; // Find the cell style X element in the doc (X) whose name corresponds to "Header". If this is found => headerStyle := X
+        if (allCS[j].name === BODY_STYLE_NAME) bodyStyle = allCS[j]; // Find the cell style element in the doc (Y) whose name correponds to "Body". If this is found => bodyStyle := Y
     }
 
     if (!headerStyle || !headerStyle.isValid) {
@@ -63,7 +65,7 @@
         var stories = doc.stories;
         for (var si = 0; si < stories.length; si++) {
             collectTables(stories[si], allTables);
-            // Container := app.activeDocument.stories, list := [].
+            // assign the following inputs to the collectTables function – Container := app.activeDocument.stories, list := [].
             // collectTables nested in a for loop produces an array that extracts every instance of a table in the doc
             // this would produce something like [Table_1, Table_2... Table_n]
         }
