@@ -2,24 +2,43 @@
 
     var doc = app.activeDocument;
     var STYLE_NAME = "Table";
-    var changes = 0;
+    var HEADER_STYLE_NAME = "Header";
+    var BODY_STYLE_NAME = "Body";
+    var styleChanges = 0;
+    var rowChanges = 0;
 
     // Resolve the target style once, up front — this is a document-level
     // question, not a per-table one, so it only needs asking once.
-    var targetStyle = null; // Construct a semantic object "target style" by declaring it as a variable and assigning null – the absence of a value. 
-    var allTS = doc.allTableStyles; // Construct a semantic object that references all table styles in the active document. 
-    
+    var targetStyle = null; // Construct a semantic object "target style" by declaring it as a variable and assigning null – the absence of a value.
+    var allTS = doc.allTableStyles; // Construct a semantic object that references all table styles in the active document.
+
     // Construct a for loop that iterates over all elements within the array allTS {TS_1, TS_2... TS_n}
-    // If one such element in the array TS_[i] corresponds to the value assigned to STYLE_NAME, such that TS_[i].name === "Table" => 
+    // If one such element in the array TS_[i] corresponds to the value assigned to STYLE_NAME, such that TS_[i].name === "Table" =>
     // assign tagetStyle to the relevant tableStyle object && Break the loop, such that targetStyle := TS_[i].name.
     for (var i = 0; i < allTS.length; i++) {
         if (allTS[i].name === STYLE_NAME) { targetStyle = allTS[i]; break; }
     }
 
-    // if targetStyle = null => !targetStyle = True, such that the user is provide an alert. 
-    // if targetStyle ≠ null, yet the object assigned to it from doc.allTableStyles is invalid => provide alert (this is a fail safe in case targetStyle is assigned something but that thing is not valid syntax...). 
+    // if targetStyle = null => !targetStyle = True, such that the user is provide an alert.
+    // if targetStyle ≠ null, yet the object assigned to it from doc.allTableStyles is invalid => provide alert (this is a fail safe in case targetStyle is assigned something but that thing is not valid syntax...).
     if (!targetStyle || !targetStyle.isValid) {
         alert("Table style \"" + STYLE_NAME + "\" does not exist in this document.");
+        return;
+    }
+
+    var headerStyle = null, bodyStyle = null;
+    var allCS = doc.allCellStyles;
+    for (var j = 0; j < allCS.length; j++) {
+        if (allCS[j].name === HEADER_STYLE_NAME) headerStyle = allCS[j];
+        if (allCS[j].name === BODY_STYLE_NAME) bodyStyle = allCS[j];
+    }
+
+    if (!headerStyle || !headerStyle.isValid) {
+        alert("Cell style \"" + HEADER_STYLE_NAME + "\" does not exist in this document.");
+        return;
+    }
+    if (!bodyStyle || !bodyStyle.isValid) {
+        alert("Cell style \"" + BODY_STYLE_NAME + "\" does not exist in this document.");
         return;
     }
 
@@ -29,7 +48,7 @@
         // Collect every table in the document, including tables nested
         // inside a cell of another table, at any depth. Works for both a
         // Story and a Cell, since both expose a .tables collection.
-        function collectTables(container, list) { // Container = an object with elements, List = an empty array to assign relevant container objects to (in this case, Tables ∈ Stories) 
+        function collectTables(container, list) { // Container = an object with elements, List = an empty array to assign relevant container objects to (in this case, Tables ∈ Stories)
             var tables = container.tables;
             for (var t = 0; t < tables.length; t++) {
                 list.push(tables[t]); //push any instance of a table at index t in the given container under iteration.
@@ -42,9 +61,9 @@
 
         var allTables = [];
         var stories = doc.stories;
-        for (var si = 0; si < stories.length; si++) { 
-            collectTables(stories[si], allTables); 
-            // Container := app.activeDocument.stories, list := []. 
+        for (var si = 0; si < stories.length; si++) {
+            collectTables(stories[si], allTables);
+            // Container := app.activeDocument.stories, list := [].
             // collectTables nested in a for loop produces an array that extracts every instance of a table in the doc
             // this would produce something like [Table_1, Table_2... Table_n]
         }
@@ -55,17 +74,44 @@
             var tbl = allTables[k]; // transform the present table into a variable to be used
             try {
                 if (tbl.appliedTableStyle !== targetStyle) { // check if the table style applied to the object corresponds to the targetStyle
-                    tbl.appliedTableStyle = targetStyle;  // if the table does not have the appropriate style, change it to the target one. 
-                    changes++; // indicate that a change has been made ***highly important for understanding transformations applied to a doc***
+                    tbl.appliedTableStyle = targetStyle;  // if the table does not have the appropriate style, change it to the target one.
+                    styleChanges++; // indicate that a change has been made ***highly important for understanding transformations applied to a doc***
+                }
+            } catch (e) {}
+
+            // First row becomes the header row; every other row is body.
+            // A table with a header region already set (headerRowCount >= 1)
+            // is treated as conformant and left alone.
+            try {
+                if (tbl.headerRowCount === 0) {
+                    tbl.headerRowCount = 1;
+                }
+
+                var rows = tbl.rows;
+                for (var r = 0; r < rows.length; r++) {
+                    var isHeaderRow  = (r === 0);
+                    var targetCS     = isHeaderRow ? headerStyle : bodyStyle;
+                    var targetCSName = isHeaderRow ? HEADER_STYLE_NAME : BODY_STYLE_NAME;
+
+                    var rowCells = rows[r].cells;
+                    for (var rc = 0; rc < rowCells.length; rc++) {
+                        try {
+                            if (rowCells[rc].appliedCellStyle.name !== targetCSName) {
+                                rowCells[rc].appliedCellStyle = targetCS;
+                                rowChanges++;
+                            }
+                        } catch (e) {}
+                    }
                 }
             } catch (e) {}
         }
 
-    }, ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Fix Table Styles"); 
+    }, ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Fix Table Styles");
     // ScriptLanguage.JAVASCRIPT = Interpret the supplied script as JS
     // UndoModes.ENTIRE_SCRIPT = treat everything performed inside this function as one atomic operation
     // "Fix table styles" = what is displayed in InDesign's undo history
 
-    alert("Done. " + changes + " table" + (changes === 1 ? "" : "s") + " corrected.");
+    alert("Done. " + styleChanges + " table style" + (styleChanges === 1 ? "" : "s") +
+          " and " + rowChanges + " row style" + (rowChanges === 1 ? "" : "s") + " corrected.");
 
 })();
