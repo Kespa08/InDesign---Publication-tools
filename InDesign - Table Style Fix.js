@@ -128,12 +128,12 @@
 
                 for (var r = 0; r < rows.length; r++) {
                     var isHeaderRow  = (r === 0);
-                    var targetCS     = isHeaderRow ? headerStyle : bodyStyle;
+                    var targetCS     = isHeaderRow ? headerStyle : bodyStyle; // determines what cell style row_r should have (if row_0 => targetCS = headerStyle, ELSE targetCS = bodyStyle) 
                     
                     var rowCells = rows[r].cells;
                     for (var rc = 0; rc < rowCells.length; rc++) {
                         try {
-                            if (rowCells[rc].appliedCellStyle !== targetCS) {
+                            if (rowCells[rc].appliedCellStyle !== targetCS) {  // does the present cell style === targetCS (headerStyle OR bodyStyle)?
                                 rowCells[rc].appliedCellStyle = targetCS;
                                 rowChanges++;
                             }
