@@ -166,9 +166,11 @@
     // UndoModes.ENTIRE_SCRIPT = treat everything performed inside this function as one atomic operation
     // "Fix table styles" = what is displayed in InDesign's undo history
 
-    alert("Done. " + styleChanges + " table style" + (styleChanges === 1 ? "" : "s") +
-          ", " + headerChanges + " row" + (headerChanges === 1 ? "" : "s") + " converted to header" +
-          ", " + rowChanges + " cell style" + (rowChanges === 1 ? "" : "s") +
-          ", and " + colWidthChanges + " column width" + (colWidthChanges === 1 ? "" : "s") + " corrected.");
-
+    alert(
+        "Done.\n\n" +
+        styleChanges + " table style" + (styleChanges === 1 ? "" : "s") + "\n" +
+        headerChanges + " row" + (headerChanges === 1 ? "" : "s") + " converted to header\n" +
+        rowChanges + " cell style" + (rowChanges === 1 ? "" : "s") + "\n" +
+        colWidthChanges + " column width" + (colWidthChanges === 1 ? "" : "s") + " corrected."
+    );
 })();
