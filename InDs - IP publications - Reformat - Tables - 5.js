@@ -223,16 +223,30 @@
                 try {
                     var text = story.paragraphs[pi].contents;
 
-                    // Find every anchor marker in this one snapshot, right
-                    // to left: a split at a later (more rightward) anchor
-                    // only ever shifts positions after it, so earlier
-                    // (more leftward) anchors found in this same snapshot
-                    // stay valid for the rest of this paragraph's processing.
-                    var searchEnd = text.length;
-                    var pos;
-                    while ((pos = text.lastIndexOf(ANCHOR_MARKER, searchEnd - 1)) !== -1) {
-                        searchEnd = pos;
+                    // Find every anchor marker in this one snapshot with a
+                    // forward scan whose search cursor only ever advances —
+                    // this always terminates, regardless of where an anchor
+                    // sits. (A prior version searched backward with
+                    // lastIndexOf and could get stuck re-finding the same
+                    // anchor forever whenever it sat at position 0 of its
+                    // paragraph — likely the majority case this pass
+                    // targets — which hung InDesign. This construction
+                    // rules out that whole bug class rather than special
+                    // casing it.)
+                    var positions = [];
+                    var searchFrom = 0;
+                    var found;
+                    while ((found = text.indexOf(ANCHOR_MARKER, searchFrom)) !== -1) {
+                        positions.push(found);
+                        searchFrom = found + 1;
+                    }
 
+                    // Process right to left: a split at a later (more
+                    // rightward) anchor only ever shifts positions after
+                    // it, so earlier (more leftward) anchors already found
+                    // in this same snapshot stay valid throughout.
+                    for (var k = positions.length - 1; k >= 0; k--) {
+                        var pos = positions[k];
                         var after = text.substring(pos + 1).replace(/\r$/, "");
                         if (after.length > 0) {
                             // Break immediately after the anchor.
