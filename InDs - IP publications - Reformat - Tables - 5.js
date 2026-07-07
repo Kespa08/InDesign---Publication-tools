@@ -1,5 +1,6 @@
 (function () {
 
+    // # CONFIG
     var doc = app.activeDocument;
     var STYLE_NAME = "Table";
     var HEADER_STYLE_NAME = "Header";
@@ -10,12 +11,15 @@
     var colWidthChanges = 0;
     var trailingSplits = 0;
     var overrideResets = 0;
+    var spacingStyleChanges = 0;
 
+    // # HELPER: ROUND TO N DECIMALS
     function roundTo(n, dec) {
         var f = Math.pow(10, dec);
         return Math.round(n * f) / f;
     }
 
+    // # HELPER: GET CONTAINER WIDTH
     // The width of whatever directly contains the table: a Cell's width
     // if the table is nested inside another table, or a TextFrame's raw
     // geometric width if the table sits directly in the main text flow.
@@ -80,9 +84,18 @@
         return;
     }
 
+    // # RESOLVE TABLE SPACING STYLE
+    var SPACING_STYLE_NAME = "Table spacing";
+    var tableSpacingStyle = doc.paragraphStyles.itemByName(SPACING_STYLE_NAME);
+    if (!tableSpacingStyle.isValid) {
+        alert("Paragraph style \"" + SPACING_STYLE_NAME + "\" does not exist in this document.");
+        return;
+    }
+
     // Wrap all writes in a single undo step so Cmd+Z reverses everything at once.
     app.doScript(function () {
 
+        // # COLLECT ALL TABLES (RECURSIVE)
         // Collect every table in the document, including tables nested
         // inside a cell of another table, at any depth. Works for both a
         // Story and a Cell, since both expose a .tables collection.
@@ -97,6 +110,7 @@
             }
         }
 
+        // # BUILD TABLE LIST
         var allTables = [];
         var stories = doc.stories;
         for (var si = 0; si < stories.length; si++) {
@@ -106,6 +120,7 @@
             // this would produce something like [Table_1, Table_2... Table_n]
         }
 
+        // # APPLY TABLE STYLE
         // Only write when something actually needs to change; direct
         // property assignment preserves local cell/row overrides.
         for (var k = 0; k < allTables.length; k++) {
@@ -117,6 +132,7 @@
                 }
             } catch (e) {}
 
+            // # HEADER ROW & CELL STYLES
             // First row becomes the header row; every other row is body.
             // rowType converts the existing row in place — unlike
             // headerRowCount, which inserts a brand new row instead of
@@ -156,6 +172,7 @@
                 }
             } catch (e) {}
 
+            // # EQUALIZE COLUMN WIDTHS
             // All columns become equal width, sized to fill the table's
             // immediate container. Rounded to 3 decimal places before
             // comparing, so floating-point noise doesn't register as a
@@ -258,11 +275,37 @@
             }
         }
 
+        // # SPACING FIX — PASS 2: apply "Table spacing" to whatever paragraph
+        // a table sits on, independent of whether PASS 1 needed to split
+        // anything this run -- a table already alone on its own paragraph
+        // still gets corrected here if that paragraph carries the wrong
+        // style. Reuses the same tables.length > 0 gate as PASS 1: a
+        // table's paragraph is a table's paragraph either way.
+        //
+        // No reverse iteration needed here (unlike PASS 1): this pass only
+        // ever reads appliedParagraphStyle and, when it differs, assigns a
+        // style -- it never inserts or removes characters, so paragraph
+        // indices never shift and nothing can be invalidated mid-loop.
+        for (var ssi2 = 0; ssi2 < stories.length; ssi2++) {
+            var story2 = stories[ssi2];
+            var paras2 = story2.paragraphs;
+            for (var pi2 = 0; pi2 < paras2.length; pi2++) {
+                if (paras2[pi2].tables.length === 0) continue;
+                try {
+                    if (paras2[pi2].appliedParagraphStyle !== tableSpacingStyle) {
+                        paras2[pi2].applyParagraphStyle(tableSpacingStyle, false);
+                        spacingStyleChanges++;
+                    }
+                } catch (e) {}
+            }
+        }
+
     }, ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Fix Table Styles & Spacing");
     // ScriptLanguage.JAVASCRIPT = Interpret the supplied script as JS
     // UndoModes.ENTIRE_SCRIPT = treat everything performed inside this function as one atomic operation
     // "Fix Table Styles & Spacing" = what is displayed in InDesign's undo history
 
+    // # SUMMARY REPORT
     alert(
         "Done.\n\n" +
         styleChanges + " table style" + (styleChanges === 1 ? "" : "s") + "\n" +
@@ -270,6 +313,7 @@
         rowChanges + " cell style" + (rowChanges === 1 ? "" : "s") + "\n" +
         colWidthChanges + " column width" + (colWidthChanges === 1 ? "" : "s") + " corrected\n" +
         trailingSplits + " table" + (trailingSplits === 1 ? "" : "s") + " split from trailing text\n" +
+        spacingStyleChanges + " table paragraph" + (spacingStyleChanges === 1 ? "" : "s") + " restyled to Table spacing\n" +
         overrideResets + " cell" + (overrideResets === 1 ? "" : "s") + " reset to their cell style."
     );
 })();
