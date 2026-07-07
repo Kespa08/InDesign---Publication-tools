@@ -8,6 +8,7 @@
     var headerChanges = 0;
     var rowChanges = 0;
     var colWidthChanges = 0;
+    var spacingChanges = 0;
 
     function roundTo(n, dec) {
         var f = Math.pow(10, dec);
@@ -75,6 +76,19 @@
     }
     if (!bodyStyle || !bodyStyle.isValid) {
         alert("Cell style \"" + BODY_STYLE_NAME + "\" does not exist in this document.");
+        return;
+    }
+
+    // Resolve the paragraph style used for the line a table sits on, up
+    // front, same reasoning as targetStyle above.
+    var PARA_STYLE_NAME = "Table spacing";
+    var tableSpacingStyle = doc.paragraphStyles.itemByName(PARA_STYLE_NAME);
+
+    // itemByName never returns null in InDesign — it returns a "dead"
+    // object instead, so isValid is the correct check (same gotcha as
+    // targetStyle above).
+    if (!tableSpacingStyle.isValid) {
+        alert("Paragraph style \"" + PARA_STYLE_NAME + "\" does not exist in this document.");
         return;
     }
 
@@ -161,16 +175,99 @@
             } catch (e) {}
         }
 
-    }, ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Fix Table Styles");
+        // # SPACING FIX: isolate every anchored table onto its own paragraph,
+        // then make sure that paragraph carries "Table spacing".
+        //
+        // A table anchored inline in text is a single character embedded in
+        // whatever paragraph it was typed into. If other text shares that
+        // paragraph (before and/or after the table), split it out into its
+        // own paragraph(s) first — the table's own paragraph is then styled
+        // "Table spacing", while the split-off text keeps whatever style it
+        // already had (e.g. "Body copy"), untouched.
+        //
+        // Story-level paragraphs are walked top scope only (doc.stories),
+        // not into cells, matching the top-level pass above — this does not
+        // reach tables nested inside another table's cell.
+        for (var ssi = 0; ssi < stories.length; ssi++) {
+            var story = stories[ssi];
+
+            // Reverse order: splitting a paragraph only ever adds new
+            // paragraphs AFTER it, so walking from the last paragraph down
+            // to the first means every not-yet-visited (lower) index is
+            // still valid when we get to it.
+            for (var pi = story.paragraphs.length - 1; pi >= 0; pi--) {
+                var para = story.paragraphs[pi];
+
+                // Locate every table anchor in this paragraph, left to
+                // right, before making any edits. A Character is a Text
+                // range one character long, so character.tables.length > 0
+                // means that character IS a table's anchor — the same
+                // .tables property collectTables() already relies on above.
+                var scanChars = para.characters;
+                var anchorIdx = [];
+                for (var ci2 = 0; ci2 < scanChars.length; ci2++) {
+                    try {
+                        if (scanChars[ci2].tables.length > 0) anchorIdx.push(ci2);
+                    } catch (e) {}
+                }
+                if (anchorIdx.length === 0) continue;
+
+                // Process anchors right to left: each anchor's own index is
+                // only ever affected by edits made to its right, and those
+                // happen first in this order.
+                for (var ai = anchorIdx.length - 1; ai >= 0; ai--) {
+                    try {
+                        var idx = anchorIdx[ai];
+                        var chars = story.paragraphs[pi].characters;
+
+                        var lastIdx = chars.length - 1;
+                        var hasReturn = (chars[lastIdx].contents === "\r");
+                        var lastContentIdx = hasReturn ? lastIdx - 1 : lastIdx;
+
+                        var trailingExists = idx < lastContentIdx;
+                        var leadingExists = idx > 0;
+
+                        if (trailingExists) {
+                            // Break immediately after the anchor.
+                            story.paragraphs[pi].characters[idx].insertionPoints[1].contents = "\r";
+                        }
+                        if (leadingExists) {
+                            // Re-fetch: the trailing break above (if any) only
+                            // affects text after idx, so idx itself is still
+                            // valid, but re-fetching keeps the specifier
+                            // unambiguous rather than relying on a stale one.
+                            story.paragraphs[pi].characters[idx].insertionPoints[0].contents = "\r";
+                        }
+
+                        // The table now sits alone on its own paragraph —
+                        // at pi if there was no leading text to split off,
+                        // otherwise at pi + 1.
+                        var tablePara = story.paragraphs[pi + (leadingExists ? 1 : 0)];
+
+                        // Split and restyle are independent checks: a table
+                        // already alone on its own paragraph still gets
+                        // corrected here if that paragraph carries the wrong
+                        // style.
+                        if (tablePara.appliedParagraphStyle !== tableSpacingStyle) {
+                            tablePara.applyParagraphStyle(tableSpacingStyle, false);
+                            spacingChanges++;
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
+
+    }, ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Fix Table Styles & Spacing");
     // ScriptLanguage.JAVASCRIPT = Interpret the supplied script as JS
     // UndoModes.ENTIRE_SCRIPT = treat everything performed inside this function as one atomic operation
-    // "Fix table styles" = what is displayed in InDesign's undo history
+    // "Fix Table Styles & Spacing" = what is displayed in InDesign's undo history
 
     alert(
         "Done.\n\n" +
         styleChanges + " table style" + (styleChanges === 1 ? "" : "s") + "\n" +
         headerChanges + " row" + (headerChanges === 1 ? "" : "s") + " converted to header\n" +
         rowChanges + " cell style" + (rowChanges === 1 ? "" : "s") + "\n" +
-        colWidthChanges + " column width" + (colWidthChanges === 1 ? "" : "s") + " corrected."
+        colWidthChanges + " column width" + (colWidthChanges === 1 ? "" : "s") + " corrected\n" +
+        spacingChanges + " table paragraph" + (spacingChanges === 1 ? "" : "s") + " reformatted."
     );
 })();
