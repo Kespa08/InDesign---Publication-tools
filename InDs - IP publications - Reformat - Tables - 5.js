@@ -80,14 +80,17 @@
     }
 
     // Resolve the paragraph style used for the line a table sits on, up
-    // front, same reasoning as targetStyle above.
+    // front, same reasoning as targetStyle above. doc.paragraphStyles only
+    // sees styles outside any Paragraph Style Group — allParagraphStyles
+    // recurses into groups, same as allTableStyles/allCellStyles above.
     var PARA_STYLE_NAME = "Table spacing";
-    var tableSpacingStyle = doc.paragraphStyles.itemByName(PARA_STYLE_NAME);
+    var tableSpacingStyle = null;
+    var allPS = doc.allParagraphStyles;
+    for (var p = 0; p < allPS.length; p++) {
+        if (allPS[p].name === PARA_STYLE_NAME) { tableSpacingStyle = allPS[p]; break; }
+    }
 
-    // itemByName never returns null in InDesign — it returns a "dead"
-    // object instead, so isValid is the correct check (same gotcha as
-    // targetStyle above).
-    if (!tableSpacingStyle.isValid) {
+    if (!tableSpacingStyle || !tableSpacingStyle.isValid) {
         alert("Paragraph style \"" + PARA_STYLE_NAME + "\" does not exist in this document.");
         return;
     }
