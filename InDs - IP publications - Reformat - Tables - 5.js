@@ -87,7 +87,9 @@
     // # RESOLVE TABLE SPACING STYLE
     var SPACING_STYLE_NAME = "Table spacing";
     var tableSpacingStyle = doc.paragraphStyles.itemByName(SPACING_STYLE_NAME);
-    if (!tableSpacingStyle.isValid) {
+    for (var ts = 0; ts 
+    
+    if (!tableSpacingStyle || !tableSpacingStyle.isValid) {
         alert("Paragraph style \"" + SPACING_STYLE_NAME + "\" does not exist in this document.");
         return;
     }
