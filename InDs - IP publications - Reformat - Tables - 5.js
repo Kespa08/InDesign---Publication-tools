@@ -198,6 +198,16 @@
             // paragraph down to the first means every not-yet-visited
             // (lower) index is still valid when we get to it.
             for (var pi = story.paragraphs.length - 1; pi >= 0; pi--) {
+                // Cheap gate: skip straight past ordinary paragraphs before
+                // ever touching their characters. .tables is the same
+                // property collectTables() already relies on for Story/Cell
+                // — a Paragraph is a Text range too, so it exposes it as
+                // well. This turns a per-character scan of the whole
+                // document into a per-paragraph property check, with the
+                // character-level scan below only ever running on
+                // paragraphs that already contain a table.
+                if (story.paragraphs[pi].tables.length === 0) continue;
+
                 var para = story.paragraphs[pi];
 
                 // Locate every table anchor in this paragraph, left to
