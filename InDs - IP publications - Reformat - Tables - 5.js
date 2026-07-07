@@ -85,9 +85,12 @@
     }
 
     // # RESOLVE TABLE SPACING STYLE
+    var tableSpacingStyle = null;
     var SPACING_STYLE_NAME = "Table spacing";
-    var tableSpacingStyle = doc.paragraphStyles.itemByName(SPACING_STYLE_NAME);
-    for (var ts = 0; ts 
+    var allParaStyles = doc.allParagraphStyles;
+    for (var ts = 0; ts < allParaStyles.length; ts++) {
+        if (allParaStyles[ts].name === SPACING_STYLE_NAME) tableSpacingStyle = allParaStyles[ts];
+    }
     
     if (!tableSpacingStyle || !tableSpacingStyle.isValid) {
         alert("Paragraph style \"" + SPACING_STYLE_NAME + "\" does not exist in this document.");
