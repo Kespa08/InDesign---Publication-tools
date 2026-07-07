@@ -9,6 +9,7 @@
     var rowChanges = 0;
     var colWidthChanges = 0;
     var trailingSplits = 0;
+    var overrideResets = 0;
 
     function roundTo(n, dec) {
         var f = Math.pow(10, dec);
@@ -139,6 +140,18 @@
                                 rowChanges++;
                             }
                         } catch (e) {}
+
+                        // Runs unconditionally on every cell, regardless of
+                        // whether its style name just changed above -- the
+                        // point is to catch drift in a cell's actual
+                        // formatting even when the assigned style was
+                        // already correct. false = only reset properties
+                        // the cell style itself defines; anything the style
+                        // doesn't touch is left alone.
+                        try {
+                            rowCells[rc].clearCellStyleOverrides(false);
+                            overrideResets++;
+                        } catch (e) {}
                     }
                 }
             } catch (e) {}
@@ -234,6 +247,7 @@
         headerChanges + " row" + (headerChanges === 1 ? "" : "s") + " converted to header\n" +
         rowChanges + " cell style" + (rowChanges === 1 ? "" : "s") + "\n" +
         colWidthChanges + " column width" + (colWidthChanges === 1 ? "" : "s") + " corrected\n" +
-        trailingSplits + " table" + (trailingSplits === 1 ? "" : "s") + " split from trailing text."
+        trailingSplits + " table" + (trailingSplits === 1 ? "" : "s") + " split from trailing text\n" +
+        overrideResets + " cell" + (overrideResets === 1 ? "" : "s") + " reset to their cell style."
     );
 })();
