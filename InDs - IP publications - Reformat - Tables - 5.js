@@ -10,6 +10,7 @@
     var rowChanges = 0;
     var colWidthChanges = 0;
     var trailingSplits = 0;
+    var leadingSplits = 0;
     var overrideResets = 0;
     var spacingStyleChanges = 0;
 
@@ -280,25 +281,73 @@
             }
         }
 
-        // # SPACING FIX — PASS 2: apply "Table spacing" to whatever paragraph
-        // a table sits on, independent of whether PASS 1 needed to split
-        // anything this run -- a table already alone on its own paragraph
-        // still gets corrected here if that paragraph carries the wrong
-        // style. Reuses the same tables.length > 0 gate as PASS 1: a
-        // table's paragraph is a table's paragraph either way.
+        // # SPACING FIX — PASS 2: ensure a paragraph break exists immediately
+        // before every table anchor, so leading text is never left sharing
+        // a paragraph with the table -- the mirror image of PASS 1. Same
+        // forward-scan anchor detection and tables.length > 0 gate; only
+        // the direction (before vs after the anchor) and the insertion
+        // point (pos vs pos + 1) differ.
         //
-        // No reverse iteration needed here (unlike PASS 1): this pass only
-        // ever reads appliedParagraphStyle and, when it differs, assigns a
-        // style -- it never inserts or removes characters, so paragraph
-        // indices never shift and nothing can be invalidated mid-loop.
+        // Same right-to-left processing order as PASS 1, for a related but
+        // distinct reason: splitting BEFORE an anchor still only ever
+        // affects paragraph-relative positions at or after the split
+        // point, so processing right to left (rightmost anchor first)
+        // keeps every not-yet-handled, more-leftward anchor's precomputed
+        // position -- and its paragraph index -- valid throughout.
+        //
+        // Split-off leading text keeps its original paragraph's style
+        // automatically -- a paragraph split doesn't change either half's
+        // style by itself, so no restyling logic is needed here.
         for (var ssi2 = 0; ssi2 < stories.length; ssi2++) {
             var story2 = stories[ssi2];
-            var paras2 = story2.paragraphs;
-            for (var pi2 = 0; pi2 < paras2.length; pi2++) {
-                if (paras2[pi2].tables.length === 0) continue;
+
+            for (var pi2 = story2.paragraphs.length - 1; pi2 >= 0; pi2--) {
+                if (story2.paragraphs[pi2].tables.length === 0) continue;
+
                 try {
-                    if (paras2[pi2].appliedParagraphStyle !== tableSpacingStyle) {
-                        paras2[pi2].applyParagraphStyle(tableSpacingStyle, false);
+                    var text2 = story2.paragraphs[pi2].contents;
+
+                    var positions2 = [];
+                    var searchFrom2 = 0;
+                    var found2;
+                    while ((found2 = text2.indexOf(ANCHOR_MARKER, searchFrom2)) !== -1) {
+                        positions2.push(found2);
+                        searchFrom2 = found2 + 1;
+                    }
+
+                    for (var m = positions2.length - 1; m >= 0; m--) {
+                        var pos2 = positions2[m];
+                        if (pos2 > 0) {
+                            // Break immediately before the anchor.
+                            story2.paragraphs[pi2].insertionPoints[pos2].contents = "\r";
+                            leadingSplits++;
+                        }
+                    }
+                } catch (e) {}
+            }
+        }
+
+        // # SPACING FIX — PASS 3: apply "Table spacing" to whatever paragraph
+        // a table sits on, independent of whether PASS 1/PASS 2 needed to
+        // split anything this run -- a table already alone on its own
+        // paragraph still gets corrected here if that paragraph carries
+        // the wrong style. Reuses the same tables.length > 0 gate as
+        // PASS 1/PASS 2: a table's paragraph is a table's paragraph
+        // either way.
+        //
+        // No reverse iteration needed here (unlike PASS 1/PASS 2): this
+        // pass only ever reads appliedParagraphStyle and, when it differs,
+        // assigns a style -- it never inserts or removes characters, so
+        // paragraph indices never shift and nothing can be invalidated
+        // mid-loop.
+        for (var ssi3 = 0; ssi3 < stories.length; ssi3++) {
+            var story3 = stories[ssi3];
+            var paras3 = story3.paragraphs;
+            for (var pi3 = 0; pi3 < paras3.length; pi3++) {
+                if (paras3[pi3].tables.length === 0) continue;
+                try {
+                    if (paras3[pi3].appliedParagraphStyle !== tableSpacingStyle) {
+                        paras3[pi3].applyParagraphStyle(tableSpacingStyle, false);
                         spacingStyleChanges++;
                     }
                 } catch (e) {}
@@ -318,6 +367,7 @@
         rowChanges + " cell style" + (rowChanges === 1 ? "" : "s") + "\n" +
         colWidthChanges + " column width" + (colWidthChanges === 1 ? "" : "s") + " corrected\n" +
         trailingSplits + " table" + (trailingSplits === 1 ? "" : "s") + " split from trailing text\n" +
+        leadingSplits + " table" + (leadingSplits === 1 ? "" : "s") + " split from leading text\n" +
         spacingStyleChanges + " table paragraph" + (spacingStyleChanges === 1 ? "" : "s") + " restyled to Table spacing\n" +
         overrideResets + " cell" + (overrideResets === 1 ? "" : "s") + " reset to their cell style."
     );
