@@ -1,5 +1,5 @@
 /**
- * Apply character style "Flag" to:
+ * Apply character style "Font flag" to:
  *
  * WIDOWS:
  *   Last line of a paragraph appears in a different text container
@@ -22,19 +22,19 @@
 
     var doc = app.activeDocument;
 
-    // Ensure the "Flag" character style exists; create it if not.
+    // Ensure the "Font flag" character style exists; create it if not.
     // Predicate form: ∀x [ ActiveDoc(x) → ∀y [ FlagCharacterStyle(y) → ( ¬Contain(x,y) → CreateIn(y,x) ) ] ]
     var flagStyle;
     try {
-        flagStyle = doc.characterStyles.itemByName("Flag");
+        flagStyle = doc.characterStyles.itemByName("Font Flag");
         flagStyle.name; // force resolution — throws if style is merely a default specifier
     } catch (e) {
-        // Style not found: create it with the required colour (C0 M100 Y0 K0)
-        flagStyle = doc.characterStyles.add({ name: "Flag" });
+        // Style not found: create it with the required colour (C100 M0 Y0 K0)
+        flagStyle = doc.characterStyles.add({ name: "Font flag" });
         var flagColor = doc.colors.add({
-            name: "Flag Magenta",
+            name: "Flag Cyan",
             model: ColorModel.PROCESS,
-            colorValue: [0, 100, 0, 0],   // [C, M, Y, K]
+            colorValue: [100, 0, 0, 0],   // [C, M, Y, K]
             space: ColorSpace.CMYK
         });
         flagStyle.fillColor = flagColor;
@@ -42,8 +42,9 @@
 
     var stories = doc.stories;
 
-    var widowCount = 0;
-    var orphanCount = 0;
+    // HEY CLAUDE, EDIT BELOW THIS LINE
+    
+    var fontCount = 0;
 
     // Safely get the parent text frame of a line
     function getFrame(line) {
