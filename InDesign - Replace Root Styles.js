@@ -38,26 +38,34 @@
 
                 var allStyles = getAllStyles();
 
-                // Resolve the target, restricted to nested (non-root) styles.
-                var nestedMatches = [];
+                // Resolve the target. Root candidates are only excluded when
+                // the source and target share a name -- that's the only case
+                // where a root-level match could actually be the source
+                // itself (e.g. root "Heading 1" vs. nested "Heading 1").
+                // When the names differ, a root-level match is unambiguous
+                // and valid, so it isn't excluded.
+                var sameName = (pair.from === pair.to);
+                var matches = [];
                 for (var a = 0; a < allStyles.length; a++) {
-                    var isRoot = false;
-                    for (var i = 0; i < rootSet.length; i++) {
-                        if (rootSet[i] === allStyles[a]) { isRoot = true; break; }
+                    if (allStyles[a].name !== pair.to) continue;
+                    if (sameName) {
+                        var isRoot = false;
+                        for (var i = 0; i < rootSet.length; i++) {
+                            if (rootSet[i] === allStyles[a]) { isRoot = true; break; }
+                        }
+                        if (isRoot) continue;
                     }
-                    if (allStyles[a].name === pair.to && !isRoot) {
-                        nestedMatches.push(allStyles[a]);
-                    }
+                    matches.push(allStyles[a]);
                 }
 
-                if (nestedMatches.length === 0) {
+                if (matches.length === 0) {
                     missingTargets.push(pair.from + " -> " + pair.to);
                     continue;
                 }
-                if (nestedMatches.length > 1) {
-                    ambiguousTargets.push(pair.from + " -> " + pair.to + " (" + nestedMatches.length + "x)");
+                if (matches.length > 1) {
+                    ambiguousTargets.push(pair.from + " -> " + pair.to + " (" + matches.length + "x)");
                 }
-                var target = nestedMatches[0];
+                var target = matches[0];
 
                 // Resolve the source, root-only, from the freshly-fetched set.
                 var source = null;
