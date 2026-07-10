@@ -12,30 +12,27 @@
     var missingTargets = [];   // pair "from" names whose "to" style wasn't found
     var ambiguousTargets = []; // "from -> to (Nx)" strings for >1 nested match
 
-    // Root-level styles, by reference, so target resolution can exclude
-    // them -- a target name may collide with a root-level source name
-    // (e.g. "Heading 1" existing both at root and nested).
-    var rootStyles = doc.paragraphStyles;
-    var rootSet = [];
-    for (var rs = 0; rs < rootStyles.length; rs++) rootSet.push(rootStyles[rs]);
-
-    function isRootStyle(candidate) {
-        for (var i = 0; i < rootSet.length; i++) {
-            if (rootSet[i] === candidate) return true;
-        }
-        return false;
-    }
-
     app.doScript(function () {
-        var allPS = doc.allParagraphStyles;
-
         for (var p = 0; p < REPLACEMENTS.length; p++) {
             var pair = REPLACEMENTS[p];
+
+            // Re-fetched every iteration: an earlier pair's removal can
+            // invalidate previously-cached style references, so this must
+            // always reflect the document's current, live state.
+            var rootStyles = doc.paragraphStyles;
+            var rootSet = [];
+            for (var rs = 0; rs < rootStyles.length; rs++) rootSet.push(rootStyles[rs]);
+
+            var allPS = doc.allParagraphStyles;
 
             // Resolve the target, restricted to nested (non-root) styles.
             var nestedMatches = [];
             for (var a = 0; a < allPS.length; a++) {
-                if (allPS[a].name === pair.to && !isRootStyle(allPS[a])) {
+                var isRoot = false;
+                for (var i = 0; i < rootSet.length; i++) {
+                    if (rootSet[i] === allPS[a]) { isRoot = true; break; }
+                }
+                if (allPS[a].name === pair.to && !isRoot) {
                     nestedMatches.push(allPS[a]);
                 }
             }
@@ -49,7 +46,7 @@
             }
             var target = nestedMatches[0];
 
-            // Resolve the source, root-only.
+            // Resolve the source, root-only, from the freshly-fetched set.
             var source = null;
             for (var rs2 = 0; rs2 < rootSet.length; rs2++) {
                 if (rootSet[rs2].name === pair.from) { source = rootSet[rs2]; break; }
