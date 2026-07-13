@@ -41,12 +41,33 @@
     //    The "(e)" is just a name for whatever error was caught -- we
     //    don't use it here, we just want the failure contained to this
     //    one item so the loop can carry on to the next one.
+    // Q: What is "entryStrings" for?
+    // A: Alongside collecting the actual frames, we build one line of
+    //    display text per frame -- e.g. "p.4  —  Rectangle  —  photo1.jpg"
+    //    -- so the dialog can show a proper scrollable list of everything
+    //    found, not just a single "Showing N of M" line. This mirrors the
+    //    same page + frame type labelling used in
+    //    "InDesign - Selection - Match and merge - 19.js", with the linked
+    //    image's file name added on instead of an object style, since
+    //    every entry here is some kind of image frame anyway -- the file
+    //    name is what actually tells two entries apart.
     var allGraphics = doc.allGraphics;
     var frames = [];
+    var entryStrings = [];
     for (var g = 0; g < allGraphics.length; g++) {
         try {
-            var frame = allGraphics[g].parent;
-            if (frame && frame.isValid) frames.push(frame);
+            var graphic = allGraphics[g];
+            var frame = graphic.parent;
+            if (!frame || !frame.isValid) continue;
+
+            var pageName = "?";
+            try { pageName = frame.parentPage.name; } catch (e1) {}
+            var frameType = frame.constructor ? frame.constructor.name : "Frame";
+            var fileName = "(unlinked)";
+            try { fileName = graphic.itemLink.name; } catch (e2) {}
+
+            frames.push(frame);
+            entryStrings.push("p." + pageName + "  —  " + frameType + "  —  " + fileName);
         } catch (e) {}
     }
 
@@ -105,6 +126,18 @@
     dlg.margins = 18;
     dlg.spacing = 12;
 
+    // Q: What is "listbox"?
+    // A: A scrollable, multi-row list control -- exactly what you see in
+    //    Match-and-merge's "Match Results" dialog. Passing "entryStrings"
+    //    here fills it with one row per frame, all visible (and
+    //    scrollable) at once, instead of only ever showing one at a time.
+    //    No "{ multiselect: true }" option this time -- Match-and-merge
+    //    needs multiselect because its Next/Previous step through whatever
+    //    subset you've selected; this tool always steps through the whole
+    //    list, so only ever one row needs to be highlighted at a time.
+    var lb = dlg.add("listbox", undefined, entryStrings);
+    lb.preferredSize = [420, 220];
+
     // Q: What is "statictext"?
     // A: The ScriptUI term for a plain, non-editable line of text inside a
     //    dialog -- just a label. We'll update its wording every time you
@@ -137,6 +170,36 @@
     doneGrp.alignment = "right";
     var doneBtn = doneGrp.add("button", undefined, "Done");
 
+    // Q: Why pull "go to frame N" out into its own function instead of
+    //    just writing it directly inside each button's onClick?
+    // A: There are now three ways to change which frame is "current":
+    //    clicking Previous, clicking Next, and clicking a row in the list
+    //    directly. All three need to do the exact same four things --
+    //    update idx, move the viewport, update the label, and highlight
+    //    the right row in the list -- so writing that once as "goTo" and
+    //    calling it from all three places keeps them impossible to
+    //    accidentally get out of sync with each other.
+    //
+    // Q: What is "suppressChange" for?
+    // A: Setting "lb.selection" (highlighting a row in code, as goTo does
+    //    below) also fires the listbox's own onChange handler, exactly as
+    //    if you'd clicked that row yourself. Without this flag, clicking
+    //    Next would trigger goTo, which highlights the next row, which
+    //    would fire onChange, which would call goTo again -- redundant at
+    //    best, and a mess to reason about. Setting suppressChange to true
+    //    right before changing the selection, then back to false right
+    //    after, tells onChange "ignore this one, it wasn't a real click."
+    var suppressChange = false;
+
+    function goTo(newIdx) {
+        idx = newIdx;
+        navToItem(frames[idx]);
+        updateStatus();
+        suppressChange = true;
+        lb.selection = idx;
+        suppressChange = false;
+    }
+
     // Q: What does the % symbol do in "(idx + 1) % frames.length"?
     // A: % is the "modulo" operator -- it gives you the remainder left
     //    over after division. For example, if there are 5 frames
@@ -155,15 +218,25 @@
     //    it runs immediately when the script starts; it only runs later,
     //    at the moment you actually click that button.
     prevBtn.onClick = function () {
-        idx = (idx - 1 + frames.length) % frames.length;
-        navToItem(frames[idx]);
-        updateStatus();
+        goTo((idx - 1 + frames.length) % frames.length);
     };
 
     nextBtn.onClick = function () {
-        idx = (idx + 1) % frames.length;
-        navToItem(frames[idx]);
-        updateStatus();
+        goTo((idx + 1) % frames.length);
+    };
+
+    // Q: What is "lb.onChange" for?
+    // A: This fires whenever you click directly on a row in the list --
+    //    letting you jump straight to any frame, not just step through
+    //    them one at a time with Previous/Next. It reads which row is now
+    //    selected ("lb.selection.index") and calls the same "goTo" as the
+    //    buttons do, so a direct click and a Next/Previous click behave
+    //    identically from that point on. The suppressChange check at the
+    //    top skips this entirely when the selection changed because goTo
+    //    set it programmatically, not because of a real click.
+    lb.onChange = function () {
+        if (suppressChange || lb.selection === null) return;
+        goTo(lb.selection.index);
     };
 
     // Q: Why doesn't Done do anything else yet?
@@ -176,13 +249,13 @@
         dlg.close();
     };
 
-    // Q: Why call updateStatus() and navToItem() here, before dlg.show()?
+    // Q: Why call goTo(0) here, before dlg.show()?
     // A: So the dialog doesn't open on a blank state -- by the time it
-    //    appears, the viewport has already jumped to the first frame and
-    //    the label already reads "Showing 1 of N," instead of waiting for
-    //    you to click Next once just to see anything happen.
-    updateStatus();
-    navToItem(frames[0]);
+    //    appears, the viewport has already jumped to the first frame, the
+    //    label already reads "Showing 1 of N," and the first row in the
+    //    list is already highlighted, instead of waiting for you to click
+    //    something once just to see anything happen.
+    goTo(0);
 
     // Q: Why is dlg.show() the very last line?
     // A: This is the line that actually displays the dialog on screen.
