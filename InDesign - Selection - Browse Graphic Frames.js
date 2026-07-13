@@ -67,7 +67,7 @@
             try { fileName = graphic.itemLink.name; } catch (e2) {}
 
             frames.push(frame);
-            entryStrings.push("p." + pageName + "  —  " + frameType + "  —  " + fileName);
+            entryStrings.push("p." + pageName + "  -  " + frameType + "  -  " + fileName);
         } catch (e) {}
     }
 
