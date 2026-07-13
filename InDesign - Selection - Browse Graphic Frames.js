@@ -163,8 +163,8 @@
     var navGrp = dlg.add("group");
     navGrp.alignment = "center";
     navGrp.spacing = 8;
-    var prevBtn = navGrp.add("button", undefined, "← Previous");
-    var nextBtn = navGrp.add("button", undefined, "Next →");
+    var prevBtn = navGrp.add("button", undefined, "Previous");
+    var nextBtn = navGrp.add("button", undefined, "Next");
 
     var doneGrp = dlg.add("group");
     doneGrp.alignment = "right";
