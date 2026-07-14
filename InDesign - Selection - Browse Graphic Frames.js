@@ -65,8 +65,16 @@
     //    image's file name added on instead of an object style, since
     //    every entry here is some kind of image frame anyway -- the file
     //    name is what actually tells two entries apart.
+    // Q: Why keep a separate "graphics" array alongside "frames"?
+    // A: Each entry in "frames" is the containing box (see the .parent
+    //    note above), but the Edit dialog needs the actual placed picture
+    //    itself, specifically its linked file's path. Keeping the
+    //    original graphic reference from this loop, in the same order as
+    //    frames, means graphics[idx] always corresponds to frames[idx] --
+    //    no need to re-derive "which graphic is inside this frame" later.
     var allGraphics = doc.allGraphics;
     var frames = [];
+    var graphics = [];
     var entryStrings = [];
     for (var g = 0; g < allGraphics.length; g++) {
         try {
@@ -81,6 +89,7 @@
             try { fileName = graphic.itemLink.name; } catch (e2) {}
 
             frames.push(frame);
+            graphics.push(graphic);
             entryStrings.push("p." + pageName + "  -  " + frameType + "  -  " + fileName);
         } catch (e) {}
     }
@@ -187,6 +196,15 @@
     var prevBtn = navGrp.add("button", undefined, "Previous");
     var nextBtn = navGrp.add("button", undefined, "Next");
 
+    // Q: Why does Edit get its own row instead of sharing one with Done?
+    // A: Matches how this file already separates concerns -- Previous/Next
+    //    are their own row, Done is its own row -- so Edit (an action on
+    //    whichever frame is currently showing) gets the same treatment
+    //    rather than being crammed in next to a different button.
+    var editGrp = dlg.add("group");
+    editGrp.alignment = "center";
+    var editBtn = editGrp.add("button", undefined, "Edit");
+
     var doneGrp = dlg.add("group");
     doneGrp.alignment = "right";
     var doneBtn = doneGrp.add("button", undefined, "Done");
@@ -258,6 +276,92 @@
     lb.onChange = function () {
         if (suppressChange || lb.selection === null) return;
         goTo(lb.selection.index);
+    };
+
+    // Q: Why is Link Path just a disabled edittext instead of a plain
+    //    label, if it's not actually editable yet?
+    // A: An "edittext" that's disabled looks and reads like a text field
+    //    (previewing what a genuinely editable version will look like
+    //    later), while ".enabled = false" makes it unambiguous, right
+    //    now, that typing into it does nothing.
+    //
+    // Q: Why is Object Style a real, working dropdown already, if this
+    //    whole feature is described as "static for now"?
+    // A: Object styles use the exact same "look it up by name, assign it
+    //    to appliedObjectStyle" pattern already proven five times over in
+    //    this project's other scripts (table styles, cell styles,
+    //    paragraph and character styles) -- there's no new risk in
+    //    reusing something this well-tested. Relinking Link Path to a
+    //    different file is a genuinely different, riskier operation (it
+    //    has to validate the new file actually exists and is a
+    //    compatible format, not just accept whatever text was typed), so
+    //    that one part alone is deliberately left for a later, more
+    //    careful pass.
+    //
+    // Q: Why fetch doc.allObjectStyles fresh every time Edit is clicked,
+    //    instead of once when the script starts?
+    // A: This palette can stay open a long time (see the #targetengine
+    //    note at the top of this file) -- someone could create or delete
+    //    an object style while it's open. Re-fetching on each click means
+    //    the dropdown always reflects the document's current styles, not
+    //    a stale snapshot from whenever the palette first opened.
+    editBtn.onClick = function () {
+        var graphic = graphics[idx];
+
+        var linkPath = "(unlinked)";
+        try { linkPath = graphic.itemLink.filePath; } catch (e) {}
+
+        var allOS = doc.allObjectStyles;
+        var styleNames = [];
+        var currentStyleIndex = 0;
+        var currentStyleName = "";
+        try { currentStyleName = frames[idx].appliedObjectStyle.name; } catch (e2) {}
+        for (var os = 0; os < allOS.length; os++) {
+            styleNames.push(allOS[os].name);
+            if (allOS[os].name === currentStyleName) currentStyleIndex = os;
+        }
+
+        var detailsDlg = new Window("dialog", "Frame Details");
+        detailsDlg.alignChildren = ["fill", "top"];
+        detailsDlg.margins = 18;
+        detailsDlg.spacing = 10;
+
+        detailsDlg.add("statictext", undefined, "Link Path:");
+        var pathField = detailsDlg.add("edittext", undefined, linkPath);
+        pathField.enabled = false;
+        pathField.preferredSize.width = 360;
+
+        detailsDlg.add("statictext", undefined, "Object Style:");
+        var styleDropdown = detailsDlg.add("dropdownlist", undefined, styleNames);
+        styleDropdown.selection = currentStyleIndex;
+
+        var detailsBtnGrp = detailsDlg.add("group");
+        detailsBtnGrp.alignment = "right";
+        detailsBtnGrp.spacing = 8;
+        var applyBtn = detailsBtnGrp.add("button", undefined, "Apply");
+        var cancelBtn = detailsBtnGrp.add("button", undefined, "Cancel");
+
+        // Q: Why wrap only this one assignment in app.doScript, when the
+        //    rest of the script never does?
+        // A: Everything else in this script only selects things and moves
+        //    the viewport -- neither is a document edit, so neither shows
+        //    up in InDesign's undo history at all. Assigning a new object
+        //    style genuinely changes the document, so it gets the same
+        //    single-undo-step treatment used for real edits everywhere
+        //    else in this repo.
+        applyBtn.onClick = function () {
+            var targetStyle = allOS[styleDropdown.selection.index];
+            app.doScript(function () {
+                frames[idx].appliedObjectStyle = targetStyle;
+            }, ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Apply Object Style");
+            detailsDlg.close();
+        };
+
+        cancelBtn.onClick = function () {
+            detailsDlg.close();
+        };
+
+        detailsDlg.show();
     };
 
     // Q: Why doesn't Done do anything else yet?
