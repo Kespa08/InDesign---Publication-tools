@@ -341,20 +341,34 @@
         var applyBtn = detailsBtnGrp.add("button", undefined, "Apply");
         var cancelBtn = detailsBtnGrp.add("button", undefined, "Cancel");
 
-        // Q: Why wrap only this one assignment in app.doScript, when the
-        //    rest of the script never does?
-        // A: Everything else in this script only selects things and moves
-        //    the viewport -- neither is a document edit, so neither shows
-        //    up in InDesign's undo history at all. Assigning a new object
-        //    style genuinely changes the document, so it gets the same
-        //    single-undo-step treatment used for real edits everywhere
-        //    else in this repo.
+        // Q: Why a plain assignment instead of wrapping it in app.doScript,
+        //    the way real edits elsewhere in this repo usually are?
+        // A: app.doScript's main value is batching several edits into one
+        //    undo step -- this is a single property assignment, which
+        //    already becomes its own single undo entry natively, with no
+        //    wrapper needed. Removing it is also a genuine simplification:
+        //    this button click fires from a dialog opened from a palette
+        //    kept alive by #targetengine, well after this script's own
+        //    top-to-bottom run already finished -- untested territory
+        //    for app.doScript in this project, so there was no good reason
+        //    to add that extra layer here in the first place.
+        //
+        // Q: Why is the whole thing now wrapped in try/catch with an
+        //    alert, when nothing else in this file surfaces its errors?
+        // A: A silent try/catch (like everywhere else in this script) is
+        //    fine when failing quietly and moving on is the right
+        //    behavior -- but a button that appears to do nothing when it
+        //    fails is confusing and hard to diagnose. Showing the actual
+        //    error message here means a failure is at least visible and
+        //    explains itself, instead of Apply silently doing nothing.
         applyBtn.onClick = function () {
-            var targetStyle = allOS[styleDropdown.selection.index];
-            app.doScript(function () {
+            try {
+                var targetStyle = allOS[styleDropdown.selection.index];
                 frames[idx].appliedObjectStyle = targetStyle;
-            }, ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Apply Object Style");
-            detailsDlg.close();
+                detailsDlg.close();
+            } catch (e) {
+                alert("Could not apply object style: " + e);
+            }
         };
 
         cancelBtn.onClick = function () {
