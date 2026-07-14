@@ -1,3 +1,17 @@
+// Q: What is "#targetengine" and why is it the very first line?
+// A: By default, InDesign runs a script, finishes it, and completely
+//    tears down the JavaScript engine that ran it -- including anything
+//    left on screen that depends on that engine still being alive. A
+//    non-modal window (see the "palette" note below) doesn't pause the
+//    script the way a modal dialog does, so without this line the
+//    script would reach its end and shut down almost immediately after
+//    the palette appears, taking the palette down with it before you
+//    could click anything. "#targetengine" tells InDesign to run this
+//    script inside a named session that stays alive independently, so
+//    the palette's buttons and list keep responding even after the
+//    script's own top-to-bottom code has finished running.
+#targetengine "browseGraphicFrames"
+
 // Q: Why is the whole script wrapped in (function () { ... })(); ?
 // A: This is a common pattern called an "immediately invoked function
 //    expression." Writing "(function () { ... })()" defines a function
@@ -113,15 +127,22 @@
     //    counted as position 0, not position 1.
     var idx = 0;
 
-    // Q: What is "Window", and what's a "dialog"?
+    // Q: What is "Window", and what's a "palette"?
     // A: ScriptUI is InDesign's built-in toolkit for building small pop-up
     //    windows with text and buttons, without needing to know any real
-    //    UI programming. "new Window('dialog', title)" creates a modal
-    //    pop-up box -- "modal" means it takes over until it's closed, so
-    //    the rest of the script pauses and waits for you to interact with
-    //    it. Every script in this repo that shows a pop-up uses this same
-    //    starting line.
-    var dlg = new Window("dialog", "Browse Graphic Frames");
+    //    UI programming. Most scripts in this repo use
+    //    "new Window('dialog', title)" -- "dialog" is modal, meaning it
+    //    takes over until closed and blocks you from clicking into the
+    //    document at all. This script uses "palette" instead: a floating,
+    //    non-modal window. That distinction is exactly what fixes the
+    //    viewport-not-updating problem -- a modal dialog was blocking the
+    //    document window from repainting in response to navToItem's
+    //    selection/zoom calls, since InDesign postpones redrawing the
+    //    document window until a modal dialog is dismissed. A palette
+    //    doesn't hold that same exclusive focus, so the document window
+    //    is free to repaint immediately, and you can also click directly
+    //    into the document while the palette stays open.
+    var dlg = new Window("palette", "Browse Graphic Frames");
     dlg.alignChildren = ["fill", "top"];
     dlg.margins = 18;
     dlg.spacing = 12;
@@ -258,11 +279,14 @@
     goTo(0);
 
     // Q: Why is dlg.show() the very last line?
-    // A: This is the line that actually displays the dialog on screen.
-    //    Because a dialog is "modal" (see the note above), this line also
-    //    pauses the script right here -- everything after it won't run
-    //    until you close the dialog (either with Done or the window's own
-    //    close button). There's nothing after it in this script, since
-    //    once you're done browsing, the script's job is finished.
+    // A: This is the line that actually displays the palette on screen.
+    //    Unlike a modal dialog, a palette's show() does NOT pause the
+    //    script -- execution continues immediately, and since there's
+    //    nothing written after this line, the script's own top-to-bottom
+    //    run ends right here. The palette keeps working afterward only
+    //    because of the #targetengine line at the very top of this file
+    //    (see its note there) -- without that, the palette would vanish
+    //    the moment this script "finished," instead of staying open and
+    //    responding to clicks the way it does now.
     dlg.show();
 })();
