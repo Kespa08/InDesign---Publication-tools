@@ -327,9 +327,20 @@
         detailsDlg.spacing = 10;
 
         detailsDlg.add("statictext", undefined, "Link Path:");
-        var pathField = detailsDlg.add("edittext", undefined, linkPath);
+        // Q: Why a button next to the path field instead of making the
+        //    field itself clickable, since the request was to trigger
+        //    relinking "from the link path section"?
+        // A: A disabled text field (see below) doesn't reliably respond
+        //    to clicks at all -- ScriptUI's click-to-trigger-an-action
+        //    event belongs to buttons, not text fields. A button next to
+        //    the field achieves the same intent (something in the Link
+        //    Path section starts the relink flow) using the control
+        //    that's actually meant for that job.
+        var pathRow = detailsDlg.add("group");
+        var pathField = pathRow.add("edittext", undefined, linkPath);
         pathField.enabled = false;
-        pathField.preferredSize.width = 360;
+        pathField.preferredSize.width = 300;
+        var relinkBtn = pathRow.add("button", undefined, "Relink All Instances");
 
         detailsDlg.add("statictext", undefined, "Object Style:");
         var styleDropdown = detailsDlg.add("dropdownlist", undefined, styleNames);
@@ -377,6 +388,21 @@
             detailsDlg.close();
         };
 
+        // Q: Why does Relink follow the exact same "set a flag, close,
+        //    act after show() returns" shape as Apply?
+        // A: Same reason as Apply: the file-picker dialog and the actual
+        //    relink are both blocked by the "modal dialog or alert is
+        //    active" restriction for as long as Frame Details is still
+        //    open, so neither can happen inside this button's own
+        //    onClick. Deferring both until after detailsDlg.show()
+        //    returns guarantees no modal dialog is active yet.
+        var relinkRequested = false;
+
+        relinkBtn.onClick = function () {
+            relinkRequested = true;
+            detailsDlg.close();
+        };
+
         cancelBtn.onClick = function () {
             detailsDlg.close();
         };
@@ -388,6 +414,42 @@
                 frames[idx].appliedObjectStyle = chosenStyle;
             } catch (e) {
                 alert("Could not apply object style: " + e);
+            }
+        } else if (relinkRequested) {
+            // Q: Why match by "filePath" instead of just the file name?
+            // A: Two different files in different folders can share the
+            //    same name -- matching the full path is the only way to
+            //    be sure we're only relinking genuine instances of this
+            //    exact source file, not some unrelated file that happens
+            //    to be called the same thing.
+            //
+            // Q: Why is app.doScript safe to use here, when it broke
+            //    Apply earlier?
+            // A: By this point Frame Details has already fully closed
+            //    (detailsDlg.show() has returned), and the enclosing
+            //    "Browse Graphic Frames" window is a non-modal palette --
+            //    so no modal dialog is active at all when this runs.
+            //    That's the exact condition that was missing before.
+            try {
+                var originalPath = graphics[idx].itemLink.filePath;
+                var chosenFile = File.openDialog("Choose the replacement file for:\n" + originalPath, undefined, false);
+                if (chosenFile) {
+                    var relinkedCount = 0;
+                    app.doScript(function () {
+                        var allLinks = doc.links;
+                        for (var li = 0; li < allLinks.length; li++) {
+                            try {
+                                if (allLinks[li].filePath === originalPath) {
+                                    allLinks[li].relink(chosenFile);
+                                    relinkedCount++;
+                                }
+                            } catch (e3) {}
+                        }
+                    }, ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Relink All Instances");
+                    alert("Relinked " + relinkedCount + " instance" + (relinkedCount === 1 ? "" : "s") + " to " + chosenFile.name + ".");
+                }
+            } catch (e4) {
+                alert("Could not relink: " + e4);
             }
         }
     };
