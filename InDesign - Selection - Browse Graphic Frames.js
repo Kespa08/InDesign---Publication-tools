@@ -341,34 +341,40 @@
         var applyBtn = detailsBtnGrp.add("button", undefined, "Apply");
         var cancelBtn = detailsBtnGrp.add("button", undefined, "Cancel");
 
-        // Q: Why a plain assignment instead of wrapping it in app.doScript,
-        //    the way real edits elsewhere in this repo usually are?
-        // A: app.doScript's main value is batching several edits into one
-        //    undo step -- this is a single property assignment, which
-        //    already becomes its own single undo entry natively, with no
-        //    wrapper needed. Removing it is also a genuine simplification:
-        //    this button click fires from a dialog opened from a palette
-        //    kept alive by #targetengine, well after this script's own
-        //    top-to-bottom run already finished -- untested territory
-        //    for app.doScript in this project, so there was no good reason
-        //    to add that extra layer here in the first place.
+        // Q: The previous version applied the style directly inside
+        //    Apply's own onClick, right before closing the dialog. Why
+        //    doesn't that work?
+        // A: It threw "Cannot handle the request because a modal dialog
+        //    or alert is active." InDesign still considers this dialog
+        //    open for the entire duration of its own button's onClick --
+        //    it doesn't finish closing until that handler returns, so a
+        //    document edit attempted from inside it still sees a modal
+        //    dialog as active and refuses. Simply moving detailsDlg.close()
+        //    to before the edit isn't reliable either: ScriptUI's close()
+        //    only requests a close, it doesn't guarantee the dialog is
+        //    fully inactive by the very next line.
         //
-        // Q: Why is the whole thing now wrapped in try/catch with an
-        //    alert, when nothing else in this file surfaces its errors?
-        // A: A silent try/catch (like everywhere else in this script) is
-        //    fine when failing quietly and moving on is the right
-        //    behavior -- but a button that appears to do nothing when it
-        //    fails is confusing and hard to diagnose. Showing the actual
-        //    error message here means a failure is at least visible and
-        //    explains itself, instead of Apply silently doing nothing.
+        // Q: So what does actually work?
+        // A: Don't do the edit inside Apply's onClick at all. Just record
+        //    which style was chosen (reading the dropdown's selection
+        //    while the dialog is still fully open, since reading it back
+        //    after closing is unverified) and close the dialog -- then do
+        //    the real edit afterward, once detailsDlg.show() itself
+        //    returns. Because this is a modal dialog, show() is guaranteed
+        //    not to return until the dialog has genuinely, fully closed,
+        //    so code written after it can never run while any modal
+        //    dialog is still active. This mirrors the exact same pattern
+        //    already used in Match-and-merge's own dialogs: a button's
+        //    onClick just records a choice into a plain variable and
+        //    closes, and the real action happens only after show()
+        //    unblocks.
+        var applyRequested = false;
+        var chosenStyle = null;
+
         applyBtn.onClick = function () {
-            try {
-                var targetStyle = allOS[styleDropdown.selection.index];
-                frames[idx].appliedObjectStyle = targetStyle;
-                detailsDlg.close();
-            } catch (e) {
-                alert("Could not apply object style: " + e);
-            }
+            chosenStyle = allOS[styleDropdown.selection.index];
+            applyRequested = true;
+            detailsDlg.close();
         };
 
         cancelBtn.onClick = function () {
@@ -376,6 +382,14 @@
         };
 
         detailsDlg.show();
+
+        if (applyRequested) {
+            try {
+                frames[idx].appliedObjectStyle = chosenStyle;
+            } catch (e) {
+                alert("Could not apply object style: " + e);
+            }
+        }
     };
 
     // Q: Why doesn't Done do anything else yet?
