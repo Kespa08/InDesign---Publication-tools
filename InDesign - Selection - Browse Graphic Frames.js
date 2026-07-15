@@ -65,16 +65,19 @@
     //    image's file name added on instead of an object style, since
     //    every entry here is some kind of image frame anyway -- the file
     //    name is what actually tells two entries apart.
-    // Q: Why keep a separate "graphics" array alongside "frames"?
-    // A: Each entry in "frames" is the containing box (see the .parent
-    //    note above), but the Edit dialog needs the actual placed picture
-    //    itself, specifically its linked file's path. Keeping the
-    //    original graphic reference from this loop, in the same order as
-    //    frames, means graphics[idx] always corresponds to frames[idx] --
-    //    no need to re-derive "which graphic is inside this frame" later.
+    // Q: Why not keep a "graphics" array alongside "frames," parallel to
+    //    how this loop already builds one for the containing frames?
+    // A: An earlier version of this script did exactly that -- but
+    //    relinking replaces the actual embedded picture inside a frame
+    //    with a new one, so a graphic reference captured once, here,
+    //    would go stale the moment a relink succeeds ("the object no
+    //    longer exists" the next time it's touched). frames[idx] stays
+    //    valid because the containing frame itself is never replaced,
+    //    only its contents -- so only frames is kept long-term here;
+    //    the current graphic is always re-derived fresh, later, from
+    //    whichever frame is showing at the time.
     var allGraphics = doc.allGraphics;
     var frames = [];
-    var graphics = [];
     var entryStrings = [];
     for (var g = 0; g < allGraphics.length; g++) {
         try {
@@ -89,7 +92,6 @@
             try { fileName = graphic.itemLink.name; } catch (e2) {}
 
             frames.push(frame);
-            graphics.push(graphic);
             entryStrings.push("p." + pageName + "  -  " + frameType + "  -  " + fileName);
         } catch (e) {}
     }
@@ -306,7 +308,17 @@
     //    the dropdown always reflects the document's current styles, not
     //    a stale snapshot from whenever the palette first opened.
     editBtn.onClick = function () {
-        var graphic = graphics[idx];
+        // Q: Why derive the graphic fresh here instead of a cached
+        //    "graphics" array, the way this script used to work?
+        // A: Same reason noted above the frames/entryStrings loop: a
+        //    cached graphic reference goes stale the moment a relink
+        //    succeeds, since relinking replaces the embedded picture
+        //    rather than editing it in place. frames[idx] is safe to
+        //    reuse (the frame itself never gets replaced), so the current
+        //    graphic is re-derived from it fresh, every single time this
+        //    dialog opens.
+        var graphic = null;
+        try { graphic = frames[idx].graphics[0]; } catch (eg) {}
 
         var linkPath = "(unlinked)";
         try { linkPath = graphic.itemLink.filePath; } catch (e) {}
@@ -430,8 +442,24 @@
             //    "Browse Graphic Frames" window is a non-modal palette --
             //    so no modal dialog is active at all when this runs.
             //    That's the exact condition that was missing before.
+            //
+            // Q: Why report the result in statusLabel instead of the
+            //    alert() this used to show?
+            // A: A successful app.doScript here appears to shift which
+            //    window InDesign treats as "active," away from this
+            //    palette toward the document window -- and alert()
+            //    centers itself relative to whatever window that is. If
+            //    the document window happens to be scrolled or positioned
+            //    somewhere unusual, the alert can appear off-screen,
+            //    which is exactly what happened testing this (InDesign
+            //    then treats that invisible alert as still active,
+            //    blocking everything until it's dismissed). statusLabel
+            //    is already on-screen and already correctly positioned,
+            //    so reporting the result there sidesteps the problem
+            //    instead of trying to force alert() to behave.
             try {
-                var originalPath = graphics[idx].itemLink.filePath;
+                var originalPath = "(unlinked)";
+                try { originalPath = frames[idx].graphics[0].itemLink.filePath; } catch (eop) {}
                 var chosenFile = File.openDialog("Choose the replacement file for:\n" + originalPath, undefined, false);
                 if (chosenFile) {
                     var relinkedCount = 0;
@@ -446,7 +474,19 @@
                             } catch (e3) {}
                         }
                     }, ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Relink All Instances");
-                    alert("Relinked " + relinkedCount + " instance" + (relinkedCount === 1 ? "" : "s") + " to " + chosenFile.name + ".");
+
+                    // Keep the visible list row in sync with the new file,
+                    // rather than leaving it showing the old file name.
+                    try {
+                        var newFrameType = frames[idx].constructor ? frames[idx].constructor.name : "Frame";
+                        var newPageName = "?";
+                        try { newPageName = frames[idx].parentPage.name; } catch (epg) {}
+                        var newLabel = "p." + newPageName + "  -  " + newFrameType + "  -  " + chosenFile.name;
+                        entryStrings[idx] = newLabel;
+                        lb.items[idx].text = newLabel;
+                    } catch (eu) {}
+
+                    statusLabel.text = "Relinked " + relinkedCount + " instance" + (relinkedCount === 1 ? "" : "s") + " to " + chosenFile.name + ".";
                 }
             } catch (e4) {
                 alert("Could not relink: " + e4);
