@@ -339,20 +339,22 @@
         detailsDlg.spacing = 10;
 
         detailsDlg.add("statictext", undefined, "Link Path:");
-        // Q: Why a button next to the path field instead of making the
+        // Q: Why a button below the path field instead of making the
         //    field itself clickable, since the request was to trigger
         //    relinking "from the link path section"?
         // A: A disabled text field (see below) doesn't reliably respond
         //    to clicks at all -- ScriptUI's click-to-trigger-an-action
-        //    event belongs to buttons, not text fields. A button next to
-        //    the field achieves the same intent (something in the Link
-        //    Path section starts the relink flow) using the control
+        //    event belongs to buttons, not text fields. A row of buttons
+        //    underneath the field achieves the same intent (something in
+        //    the Link Path section starts these actions) using the control
         //    that's actually meant for that job.
-        var pathRow = detailsDlg.add("group");
-        var pathField = pathRow.add("edittext", undefined, linkPath);
+        var pathField = detailsDlg.add("edittext", undefined, linkPath);
         pathField.enabled = false;
         pathField.preferredSize.width = 300;
-        var relinkBtn = pathRow.add("button", undefined, "Relink All Instances");
+
+        var pathBtnRow = detailsDlg.add("group");
+        var revealBtn = pathBtnRow.add("button", undefined, "Reveal in Finder");
+        var relinkBtn = pathBtnRow.add("button", undefined, "Relink All Instances");
 
         detailsDlg.add("statictext", undefined, "Object Style:");
         var styleDropdown = detailsDlg.add("dropdownlist", undefined, styleNames);
@@ -398,6 +400,37 @@
             chosenStyle = allOS[styleDropdown.selection.index];
             applyRequested = true;
             detailsDlg.close();
+        };
+
+        // Q: Why doesn't "Reveal in Finder" need the same "set a flag,
+        //    close, act after show() returns" treatment as Apply/Relink?
+        // A: Those two edit the actual document (an object style, or a
+        //    link's source file), which is exactly what the "modal dialog
+        //    active" restriction blocks. Opening a folder in Finder/
+        //    Explorer isn't a document edit at all -- it's just asking the
+        //    operating system to open a window -- so there's nothing here
+        //    for that restriction to block, and it's safe to run directly
+        //    inside this button's own onClick.
+        //
+        // Q: Why open the containing folder instead of selecting the
+        //    exact file within it, the way Finder's own "Reveal" does?
+        // A: Actually selecting one specific file (rather than just
+        //    opening its folder) has no ExtendScript API of its own on
+        //    either platform -- macOS Finder can do it, but only via a
+        //    separate AppleScript command, and there's no matching way to
+        //    do it on Windows at all. Opening the folder is the one
+        //    behavior that works identically on both operating systems.
+        revealBtn.onClick = function () {
+            try {
+                var folder = File(linkPath).parent;
+                if (folder && folder.exists) {
+                    folder.execute();
+                } else {
+                    alert("Could not find the containing folder for this file.");
+                }
+            } catch (e5) {
+                alert("Could not reveal file: " + e5);
+            }
         };
 
         // Q: Why does Relink follow the exact same "set a flag, close,
