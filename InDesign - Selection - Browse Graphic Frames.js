@@ -1,0 +1,559 @@
+// Q: What is "#targetengine" and why is it the very first line?
+// A: By default, InDesign runs a script, finishes it, and completely
+//    tears down the JavaScript engine that ran it -- including anything
+//    left on screen that depends on that engine still being alive. A
+//    non-modal window (see the "palette" note below) doesn't pause the
+//    script the way a modal dialog does, so without this line the
+//    script would reach its end and shut down almost immediately after
+//    the palette appears, taking the palette down with it before you
+//    could click anything. "#targetengine" tells InDesign to run this
+//    script inside a named session that stays alive independently, so
+//    the palette's buttons and list keep responding even after the
+//    script's own top-to-bottom code has finished running.
+#targetengine "browseGraphicFrames"
+
+// Q: Why is the whole script wrapped in (function () { ... })(); ?
+// A: This is a common pattern called an "immediately invoked function
+//    expression." Writing "(function () { ... })()" defines a function
+//    and calls it in the same breath. Everything declared inside stays
+//    private to this script instead of leaking into InDesign's shared
+//    scripting environment, where it could clash with variables from
+//    some other script. You'll see this same shape at the top of every
+//    script in this repo.
+(function () {
+
+    // Q: What are "app" and "doc"?
+    // A: "app" is provided automatically by InDesign -- it represents the
+    //    running application itself. "doc" is just a shorthand variable we
+    //    create, pointing at app.activeDocument (whichever document is
+    //    currently open and in front). Every line below reads "doc"
+    //    instead of retyping "app.activeDocument" each time.
+    var doc = app.activeDocument;
+
+    // Q: Why loop through doc.allGraphics instead of looking at pages
+    //    directly?
+    // A: doc.allGraphics is a ready-made list of every placed picture
+    //    (image, EPS, PDF, etc.) anywhere in the whole document, no
+    //    matter which page it's on or whether it's a normal placed image
+    //    or one anchored inline inside a paragraph of text. That saves us
+    //    from having to separately walk every page AND every story to
+    //    make sure nothing is missed.
+    //
+    // Q: What does ".parent" mean on line 20?
+    // A: A placed picture always sits INSIDE a frame -- think of the
+    //    frame as the box, and the picture as the photo inside the box.
+    //    When you click an image on an InDesign page, you're actually
+    //    selecting the box (the frame), not the raw picture data. So
+    //    ".parent" on a graphic gives us that containing box, which is
+    //    the thing this script actually needs to select and jump to.
+    //
+    // Q: What is try { ... } catch (e) { } doing here, and everywhere else
+    //    in this script?
+    // A: "try" means "attempt to run this code." If anything inside goes
+    //    wrong (for example, a frame that's somehow already been deleted),
+    //    "catch" quietly steps in instead of crashing the entire script.
+    //    The "(e)" is just a name for whatever error was caught -- we
+    //    don't use it here, we just want the failure contained to this
+    //    one item so the loop can carry on to the next one.
+    // Q: What is "entryStrings" for?
+    // A: Alongside collecting the actual frames, we build one line of
+    //    display text per frame -- e.g. "p.4  —  Rectangle  —  photo1.jpg"
+    //    -- so the dialog can show a proper scrollable list of everything
+    //    found, not just a single "Showing N of M" line. This mirrors the
+    //    same page + frame type labelling used in
+    //    "InDesign - Selection - Match and merge - 19.js", with the linked
+    //    image's file name added on instead of an object style, since
+    //    every entry here is some kind of image frame anyway -- the file
+    //    name is what actually tells two entries apart.
+    // Q: Why not keep a "graphics" array alongside "frames," parallel to
+    //    how this loop already builds one for the containing frames?
+    // A: An earlier version of this script did exactly that -- but
+    //    relinking replaces the actual embedded picture inside a frame
+    //    with a new one, so a graphic reference captured once, here,
+    //    would go stale the moment a relink succeeds ("the object no
+    //    longer exists" the next time it's touched). frames[idx] stays
+    //    valid because the containing frame itself is never replaced,
+    //    only its contents -- so only frames is kept long-term here;
+    //    the current graphic is always re-derived fresh, later, from
+    //    whichever frame is showing at the time.
+    var allGraphics = doc.allGraphics;
+    var frames = [];
+    var entryStrings = [];
+    for (var g = 0; g < allGraphics.length; g++) {
+        try {
+            var graphic = allGraphics[g];
+            var frame = graphic.parent;
+            if (!frame || !frame.isValid) continue;
+
+            var pageName = "?";
+            try { pageName = frame.parentPage.name; } catch (e1) {}
+            var frameType = frame.constructor ? frame.constructor.name : "Frame";
+            var fileName = "(unlinked)";
+            try { fileName = graphic.itemLink.name; } catch (e2) {}
+
+            frames.push(frame);
+            entryStrings.push("p." + pageName + "  -  " + frameType + "  -  " + fileName);
+        } catch (e) {}
+    }
+
+    // Q: Why check frames.length === 0 before doing anything else?
+    // A: If the document has no images at all, there's nothing to browse.
+    //    Popping up a dialog with no content to show would just be
+    //    confusing, so we alert the user and "return" -- which means
+    //    "stop running this function right now" -- before we ever try to
+    //    build the dialog.
+    if (frames.length === 0) {
+        alert("No image/graphic frames found in this document.");
+        return;
+    }
+
+    // Q: What does this function actually do, in plain terms?
+    // A: Three steps, one per line: (1) turn to the page the frame lives
+    //    on, (2) select the frame, just like clicking it with the mouse,
+    //    (3) zoom the view so the whole page is visible and the selected
+    //    frame is easy to see. It's wrapped in its own try/catch (and a
+    //    second, inner one just around the zoom step) because zooming can
+    //    occasionally fail in ways that shouldn't stop the selection from
+    //    having worked.
+    //
+    // Q: Why is this copied from another script instead of written fresh?
+    // A: "InDesign - Selection - Match and merge - 19.js" already has this
+    //    exact "select it and move the view to it" logic, tested and
+    //    working. Reusing it instead of writing a new version means one
+    //    less thing that could have a new, different bug.
+    function navToItem(item) {
+        try {
+            var page = item.parentPage;
+            if (!page || !page.isValid) return;
+            app.activeWindow.activePage = page;
+            app.select(item);
+            try { app.activeWindow.zoom(ZoomOptions.fitPage); } catch (e2) {}
+        } catch (e) {}
+    }
+
+    // Q: What is "idx"?
+    // A: Short for "index" -- a plain number tracking which frame in our
+    //    list we're currently looking at. It starts at 0 because, like
+    //    almost everywhere in programming, the first item in a list is
+    //    counted as position 0, not position 1.
+    var idx = 0;
+
+    // Q: What is "Window", and what's a "palette"?
+    // A: ScriptUI is InDesign's built-in toolkit for building small pop-up
+    //    windows with text and buttons, without needing to know any real
+    //    UI programming. Most scripts in this repo use
+    //    "new Window('dialog', title)" -- "dialog" is modal, meaning it
+    //    takes over until closed and blocks you from clicking into the
+    //    document at all. This script uses "palette" instead: a floating,
+    //    non-modal window. That distinction is exactly what fixes the
+    //    viewport-not-updating problem -- a modal dialog was blocking the
+    //    document window from repainting in response to navToItem's
+    //    selection/zoom calls, since InDesign postpones redrawing the
+    //    document window until a modal dialog is dismissed. A palette
+    //    doesn't hold that same exclusive focus, so the document window
+    //    is free to repaint immediately, and you can also click directly
+    //    into the document while the palette stays open.
+    var dlg = new Window("palette", "Browse Graphic Frames");
+    dlg.alignChildren = ["fill", "top"];
+    dlg.margins = 18;
+    dlg.spacing = 12;
+
+    // Q: What is "listbox"?
+    // A: A scrollable, multi-row list control -- exactly what you see in
+    //    Match-and-merge's "Match Results" dialog. Passing "entryStrings"
+    //    here fills it with one row per frame, all visible (and
+    //    scrollable) at once, instead of only ever showing one at a time.
+    //    No "{ multiselect: true }" option this time -- Match-and-merge
+    //    needs multiselect because its Next/Previous step through whatever
+    //    subset you've selected; this tool always steps through the whole
+    //    list, so only ever one row needs to be highlighted at a time.
+    var lb = dlg.add("listbox", undefined, entryStrings);
+    lb.preferredSize = [420, 220];
+
+    // Q: What is "statictext"?
+    // A: The ScriptUI term for a plain, non-editable line of text inside a
+    //    dialog -- just a label. We'll update its wording every time you
+    //    click Previous/Next.
+    var statusLabel = dlg.add("statictext", undefined, "");
+    statusLabel.alignment = "center";
+
+    // Q: Why is this its own separate function instead of just being
+    //    written inline wherever we need it?
+    // A: We need to set this exact same label text in three different
+    //    places below (Previous, Next, and once before the dialog even
+    //    opens). Writing it once as a function and calling
+    //    "updateStatus()" each time avoids repeating the same line three
+    //    times -- if we ever want to change the wording, there's only one
+    //    place to edit.
+    function updateStatus() {
+        statusLabel.text = "Showing " + (idx + 1) + " of " + frames.length;
+    }
+
+    // Q: What is a "group"?
+    // A: A simple container for laying other controls (like buttons) out
+    //    next to each other in a row, instead of stacked vertically.
+    var navGrp = dlg.add("group");
+    navGrp.alignment = "center";
+    navGrp.spacing = 8;
+    var prevBtn = navGrp.add("button", undefined, "Previous");
+    var nextBtn = navGrp.add("button", undefined, "Next");
+
+    // Q: Why does Edit get its own row instead of sharing one with Done?
+    // A: Matches how this file already separates concerns -- Previous/Next
+    //    are their own row, Done is its own row -- so Edit (an action on
+    //    whichever frame is currently showing) gets the same treatment
+    //    rather than being crammed in next to a different button.
+    var editGrp = dlg.add("group");
+    editGrp.alignment = "center";
+    var editBtn = editGrp.add("button", undefined, "Edit");
+
+    var doneGrp = dlg.add("group");
+    doneGrp.alignment = "right";
+    var doneBtn = doneGrp.add("button", undefined, "Done");
+
+    // Q: Why pull "go to frame N" out into its own function instead of
+    //    just writing it directly inside each button's onClick?
+    // A: There are now three ways to change which frame is "current":
+    //    clicking Previous, clicking Next, and clicking a row in the list
+    //    directly. All three need to do the exact same four things --
+    //    update idx, move the viewport, update the label, and highlight
+    //    the right row in the list -- so writing that once as "goTo" and
+    //    calling it from all three places keeps them impossible to
+    //    accidentally get out of sync with each other.
+    //
+    // Q: What is "suppressChange" for?
+    // A: Setting "lb.selection" (highlighting a row in code, as goTo does
+    //    below) also fires the listbox's own onChange handler, exactly as
+    //    if you'd clicked that row yourself. Without this flag, clicking
+    //    Next would trigger goTo, which highlights the next row, which
+    //    would fire onChange, which would call goTo again -- redundant at
+    //    best, and a mess to reason about. Setting suppressChange to true
+    //    right before changing the selection, then back to false right
+    //    after, tells onChange "ignore this one, it wasn't a real click."
+    var suppressChange = false;
+
+    function goTo(newIdx) {
+        idx = newIdx;
+        navToItem(frames[idx]);
+        updateStatus();
+        suppressChange = true;
+        lb.selection = idx;
+        suppressChange = false;
+    }
+
+    // Q: What does the % symbol do in "(idx + 1) % frames.length"?
+    // A: % is the "modulo" operator -- it gives you the remainder left
+    //    over after division. For example, if there are 5 frames
+    //    (frames.length is 5) and idx is currently 4 (the last frame,
+    //    since counting starts at 0), then idx + 1 is 5, and
+    //    5 % 5 is 0 -- the remainder of 5 divided by 5 is 0. So instead of
+    //    counting past the end of the list, it wraps back around to 0,
+    //    the first frame. The "+ frames.length" in the Previous handler
+    //    below does the same trick in the other direction, so subtracting
+    //    1 from position 0 wraps around to the last frame instead of
+    //    going negative.
+    //
+    // Q: What is ".onClick = function () { ... }" ?
+    // A: This assigns a function to run whenever that specific button is
+    //    clicked -- InDesign calls it an "event handler." Nothing inside
+    //    it runs immediately when the script starts; it only runs later,
+    //    at the moment you actually click that button.
+    prevBtn.onClick = function () {
+        goTo((idx - 1 + frames.length) % frames.length);
+    };
+
+    nextBtn.onClick = function () {
+        goTo((idx + 1) % frames.length);
+    };
+
+    // Q: What is "lb.onChange" for?
+    // A: This fires whenever you click directly on a row in the list --
+    //    letting you jump straight to any frame, not just step through
+    //    them one at a time with Previous/Next. It reads which row is now
+    //    selected ("lb.selection.index") and calls the same "goTo" as the
+    //    buttons do, so a direct click and a Next/Previous click behave
+    //    identically from that point on. The suppressChange check at the
+    //    top skips this entirely when the selection changed because goTo
+    //    set it programmatically, not because of a real click.
+    lb.onChange = function () {
+        if (suppressChange || lb.selection === null) return;
+        goTo(lb.selection.index);
+    };
+
+    // Q: Why is Link Path just a disabled edittext instead of a plain
+    //    label, if it's not actually editable yet?
+    // A: An "edittext" that's disabled looks and reads like a text field
+    //    (previewing what a genuinely editable version will look like
+    //    later), while ".enabled = false" makes it unambiguous, right
+    //    now, that typing into it does nothing.
+    //
+    // Q: Why is Object Style a real, working dropdown already, if this
+    //    whole feature is described as "static for now"?
+    // A: Object styles use the exact same "look it up by name, assign it
+    //    to appliedObjectStyle" pattern already proven five times over in
+    //    this project's other scripts (table styles, cell styles,
+    //    paragraph and character styles) -- there's no new risk in
+    //    reusing something this well-tested. Relinking Link Path to a
+    //    different file is a genuinely different, riskier operation (it
+    //    has to validate the new file actually exists and is a
+    //    compatible format, not just accept whatever text was typed), so
+    //    that one part alone is deliberately left for a later, more
+    //    careful pass.
+    //
+    // Q: Why fetch doc.allObjectStyles fresh every time Edit is clicked,
+    //    instead of once when the script starts?
+    // A: This palette can stay open a long time (see the #targetengine
+    //    note at the top of this file) -- someone could create or delete
+    //    an object style while it's open. Re-fetching on each click means
+    //    the dropdown always reflects the document's current styles, not
+    //    a stale snapshot from whenever the palette first opened.
+    editBtn.onClick = function () {
+        // Q: Why derive the graphic fresh here instead of a cached
+        //    "graphics" array, the way this script used to work?
+        // A: Same reason noted above the frames/entryStrings loop: a
+        //    cached graphic reference goes stale the moment a relink
+        //    succeeds, since relinking replaces the embedded picture
+        //    rather than editing it in place. frames[idx] is safe to
+        //    reuse (the frame itself never gets replaced), so the current
+        //    graphic is re-derived from it fresh, every single time this
+        //    dialog opens.
+        var graphic = null;
+        try { graphic = frames[idx].graphics[0]; } catch (eg) {}
+
+        var linkPath = "(unlinked)";
+        try { linkPath = graphic.itemLink.filePath; } catch (e) {}
+
+        var allOS = doc.allObjectStyles;
+        var styleNames = [];
+        var currentStyleIndex = 0;
+        var currentStyleName = "";
+        try { currentStyleName = frames[idx].appliedObjectStyle.name; } catch (e2) {}
+        for (var os = 0; os < allOS.length; os++) {
+            styleNames.push(allOS[os].name);
+            if (allOS[os].name === currentStyleName) currentStyleIndex = os;
+        }
+
+        var detailsDlg = new Window("dialog", "Frame Details");
+        detailsDlg.alignChildren = ["fill", "top"];
+        detailsDlg.margins = 18;
+        detailsDlg.spacing = 10;
+
+        detailsDlg.add("statictext", undefined, "Link Path:");
+        // Q: Why a button below the path field instead of making the
+        //    field itself clickable, since the request was to trigger
+        //    relinking "from the link path section"?
+        // A: A disabled text field (see below) doesn't reliably respond
+        //    to clicks at all -- ScriptUI's click-to-trigger-an-action
+        //    event belongs to buttons, not text fields. A row of buttons
+        //    underneath the field achieves the same intent (something in
+        //    the Link Path section starts these actions) using the control
+        //    that's actually meant for that job.
+        var pathField = detailsDlg.add("edittext", undefined, linkPath);
+        pathField.enabled = false;
+        pathField.preferredSize.width = 300;
+
+        var pathBtnRow = detailsDlg.add("group");
+        var revealBtn = pathBtnRow.add("button", undefined, "Reveal in Finder");
+        var relinkBtn = pathBtnRow.add("button", undefined, "Relink All Instances");
+
+        detailsDlg.add("statictext", undefined, "Object Style:");
+        var styleDropdown = detailsDlg.add("dropdownlist", undefined, styleNames);
+        styleDropdown.selection = currentStyleIndex;
+
+        var detailsBtnGrp = detailsDlg.add("group");
+        detailsBtnGrp.alignment = "right";
+        detailsBtnGrp.spacing = 8;
+        var applyBtn = detailsBtnGrp.add("button", undefined, "Apply");
+        var cancelBtn = detailsBtnGrp.add("button", undefined, "Cancel");
+
+        // Q: The previous version applied the style directly inside
+        //    Apply's own onClick, right before closing the dialog. Why
+        //    doesn't that work?
+        // A: It threw "Cannot handle the request because a modal dialog
+        //    or alert is active." InDesign still considers this dialog
+        //    open for the entire duration of its own button's onClick --
+        //    it doesn't finish closing until that handler returns, so a
+        //    document edit attempted from inside it still sees a modal
+        //    dialog as active and refuses. Simply moving detailsDlg.close()
+        //    to before the edit isn't reliable either: ScriptUI's close()
+        //    only requests a close, it doesn't guarantee the dialog is
+        //    fully inactive by the very next line.
+        //
+        // Q: So what does actually work?
+        // A: Don't do the edit inside Apply's onClick at all. Just record
+        //    which style was chosen (reading the dropdown's selection
+        //    while the dialog is still fully open, since reading it back
+        //    after closing is unverified) and close the dialog -- then do
+        //    the real edit afterward, once detailsDlg.show() itself
+        //    returns. Because this is a modal dialog, show() is guaranteed
+        //    not to return until the dialog has genuinely, fully closed,
+        //    so code written after it can never run while any modal
+        //    dialog is still active. This mirrors the exact same pattern
+        //    already used in Match-and-merge's own dialogs: a button's
+        //    onClick just records a choice into a plain variable and
+        //    closes, and the real action happens only after show()
+        //    unblocks.
+        var applyRequested = false;
+        var chosenStyle = null;
+
+        applyBtn.onClick = function () {
+            chosenStyle = allOS[styleDropdown.selection.index];
+            applyRequested = true;
+            detailsDlg.close();
+        };
+
+        // Q: Why doesn't "Reveal in Finder" need the same "set a flag,
+        //    close, act after show() returns" treatment as Apply/Relink?
+        // A: Those two edit the actual document (an object style, or a
+        //    link's source file), which is exactly what the "modal dialog
+        //    active" restriction blocks. Opening a folder in Finder/
+        //    Explorer isn't a document edit at all -- it's just asking the
+        //    operating system to open a window -- so there's nothing here
+        //    for that restriction to block, and it's safe to run directly
+        //    inside this button's own onClick.
+        //
+        // Q: Why open the containing folder instead of selecting the
+        //    exact file within it, the way Finder's own "Reveal" does?
+        // A: Actually selecting one specific file (rather than just
+        //    opening its folder) has no ExtendScript API of its own on
+        //    either platform -- macOS Finder can do it, but only via a
+        //    separate AppleScript command, and there's no matching way to
+        //    do it on Windows at all. Opening the folder is the one
+        //    behavior that works identically on both operating systems.
+        revealBtn.onClick = function () {
+            try {
+                var folder = File(linkPath).parent;
+                if (folder && folder.exists) {
+                    folder.execute();
+                } else {
+                    alert("Could not find the containing folder for this file.");
+                }
+            } catch (e5) {
+                alert("Could not reveal file: " + e5);
+            }
+        };
+
+        // Q: Why does Relink follow the exact same "set a flag, close,
+        //    act after show() returns" shape as Apply?
+        // A: Same reason as Apply: the file-picker dialog and the actual
+        //    relink are both blocked by the "modal dialog or alert is
+        //    active" restriction for as long as Frame Details is still
+        //    open, so neither can happen inside this button's own
+        //    onClick. Deferring both until after detailsDlg.show()
+        //    returns guarantees no modal dialog is active yet.
+        var relinkRequested = false;
+
+        relinkBtn.onClick = function () {
+            relinkRequested = true;
+            detailsDlg.close();
+        };
+
+        cancelBtn.onClick = function () {
+            detailsDlg.close();
+        };
+
+        detailsDlg.show();
+
+        if (applyRequested) {
+            try {
+                frames[idx].appliedObjectStyle = chosenStyle;
+            } catch (e) {
+                alert("Could not apply object style: " + e);
+            }
+        } else if (relinkRequested) {
+            // Q: Why match by "filePath" instead of just the file name?
+            // A: Two different files in different folders can share the
+            //    same name -- matching the full path is the only way to
+            //    be sure we're only relinking genuine instances of this
+            //    exact source file, not some unrelated file that happens
+            //    to be called the same thing.
+            //
+            // Q: Why is app.doScript safe to use here, when it broke
+            //    Apply earlier?
+            // A: By this point Frame Details has already fully closed
+            //    (detailsDlg.show() has returned), and the enclosing
+            //    "Browse Graphic Frames" window is a non-modal palette --
+            //    so no modal dialog is active at all when this runs.
+            //    That's the exact condition that was missing before.
+            //
+            // Q: Why report the result in statusLabel instead of the
+            //    alert() this used to show?
+            // A: A successful app.doScript here appears to shift which
+            //    window InDesign treats as "active," away from this
+            //    palette toward the document window -- and alert()
+            //    centers itself relative to whatever window that is. If
+            //    the document window happens to be scrolled or positioned
+            //    somewhere unusual, the alert can appear off-screen,
+            //    which is exactly what happened testing this (InDesign
+            //    then treats that invisible alert as still active,
+            //    blocking everything until it's dismissed). statusLabel
+            //    is already on-screen and already correctly positioned,
+            //    so reporting the result there sidesteps the problem
+            //    instead of trying to force alert() to behave.
+            try {
+                var originalPath = "(unlinked)";
+                try { originalPath = frames[idx].graphics[0].itemLink.filePath; } catch (eop) {}
+                var chosenFile = File.openDialog("Choose the replacement file for:\n" + originalPath, undefined, false);
+                if (chosenFile) {
+                    var relinkedCount = 0;
+                    app.doScript(function () {
+                        var allLinks = doc.links;
+                        for (var li = 0; li < allLinks.length; li++) {
+                            try {
+                                if (allLinks[li].filePath === originalPath) {
+                                    allLinks[li].relink(chosenFile);
+                                    relinkedCount++;
+                                }
+                            } catch (e3) {}
+                        }
+                    }, ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Relink All Instances");
+
+                    // Keep the visible list row in sync with the new file,
+                    // rather than leaving it showing the old file name.
+                    try {
+                        var newFrameType = frames[idx].constructor ? frames[idx].constructor.name : "Frame";
+                        var newPageName = "?";
+                        try { newPageName = frames[idx].parentPage.name; } catch (epg) {}
+                        var newLabel = "p." + newPageName + "  -  " + newFrameType + "  -  " + chosenFile.name;
+                        entryStrings[idx] = newLabel;
+                        lb.items[idx].text = newLabel;
+                    } catch (eu) {}
+
+                    statusLabel.text = "Relinked " + relinkedCount + " instance" + (relinkedCount === 1 ? "" : "s") + " to " + chosenFile.name + ".";
+                }
+            } catch (e4) {
+                alert("Could not relink: " + e4);
+            }
+        }
+    };
+
+    // Q: Why doesn't Done do anything else yet?
+    // A: This script is deliberately a first, simple step -- just
+    //    browsing, no edits. "dlg.close()" just dismisses the pop-up;
+    //    later, this is the exact spot where any future action (applying
+    //    a change to whichever frame you last viewed, for example) would
+    //    be added.
+    doneBtn.onClick = function () {
+        dlg.close();
+    };
+
+    // Q: Why call goTo(0) here, before dlg.show()?
+    // A: So the dialog doesn't open on a blank state -- by the time it
+    //    appears, the viewport has already jumped to the first frame, the
+    //    label already reads "Showing 1 of N," and the first row in the
+    //    list is already highlighted, instead of waiting for you to click
+    //    something once just to see anything happen.
+    goTo(0);
+
+    // Q: Why is dlg.show() the very last line?
+    // A: This is the line that actually displays the palette on screen.
+    //    Unlike a modal dialog, a palette's show() does NOT pause the
+    //    script -- execution continues immediately, and since there's
+    //    nothing written after this line, the script's own top-to-bottom
+    //    run ends right here. The palette keeps working afterward only
+    //    because of the #targetengine line at the very top of this file
+    //    (see its note there) -- without that, the palette would vanish
+    //    the moment this script "finished," instead of staying open and
+    //    responding to clicks the way it does now.
+    dlg.show();
+})();
