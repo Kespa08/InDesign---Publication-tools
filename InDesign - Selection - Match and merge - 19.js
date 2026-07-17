@@ -16,6 +16,12 @@
  * Navigation and Merge powered by app.doScript() for reliable engine access.
  */
 
+// Keeps the "Match Results" palette (see runStepThrough, below) alive after
+// this script's own top-to-bottom code finishes -- a non-modal palette's
+// .show() doesn't block the way a modal dialog's does, so without this the
+// palette would otherwise vanish almost immediately after appearing.
+#targetengine "selectionInspector"
+
 (function () {
 
     if (!app.documents.length) { alert("No document open."); return; }
@@ -501,7 +507,12 @@
         var entryStrings = [];
         for (var ei = 0; ei < matches.length; ei++) entryStrings.push(matches[ei].entry);
 
-        var listDlg = new Window("dialog", "Match Results");
+        // "palette" instead of "dialog": a modal dialog makes InDesign
+        // postpone repainting the document window until it closes, which is
+        // why Previous/Next's navFn calls (select + zoom) had no visible
+        // effect. A palette doesn't hold that same exclusive focus, so the
+        // document window is free to redraw immediately.
+        var listDlg = new Window("palette", "Match Results");
         listDlg.alignChildren = ["fill", "top"];
         listDlg.margins = 18;
         listDlg.spacing = 10;
@@ -583,7 +594,19 @@
                 var selectedMatchObjs = [];
                 for (var si2 = 0; si2 < current.length; si2++) selectedMatchObjs.push(matches[current[si2]]);
                 if (!adjustAndConfirmFn(selectedMatchObjs)) return;
-                for (var mi = 0; mi < current.length; mi++) mergeFn(matches[current[mi]]);
+
+                // This click's actual edits get their own undo step now that
+                // listDlg is a palette: the outer app.doScript(...,
+                // "Selection Inspector") wrapper around the whole browsing
+                // session returns the instant listDlg.show() is called
+                // (palettes don't block), so it no longer groups anything
+                // that happens afterward -- including Merge clicks that can
+                // come much later. Wrapping just this edit loop keeps one
+                // click's worth of changes undoable in a single Cmd+Z, same
+                // as before.
+                app.doScript(function () {
+                    for (var mi = 0; mi < current.length; mi++) mergeFn(matches[current[mi]]);
+                }, ScriptLanguage.JAVASCRIPT, undefined, UndoModes.ENTIRE_SCRIPT, "Merge");
                 subset = current;
                 lb.removeAll();
                 for (var ri = 0; ri < matches.length; ri++) lb.add("item", matches[ri].entry);
