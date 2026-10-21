@@ -60,22 +60,14 @@ function main() {
         return;
     }
 
-    // Prompt the user for each group's candidate count, in group order
-    var countsInput = prompt("Enter the number of candidates in each group, in order, separated by commas (e.g. 5,3,4):", "", scriptTitle);
-    if (countsInput === null || countsInput === "") {
+    // Prompt the user for the number of candidates per group (the same for every group)
+    var candidatesInput = prompt("Enter the number of candidates per group:", "", scriptTitle);
+    if (candidatesInput === null || candidatesInput === "") {
         return;
     }
-    var parts = countsInput.replace(/\s/g, "").split(",");
-    var candidateCounts = [];
-    for (var p = 0; p < parts.length; p++) {
-        if (!/^\d+$/.test(parts[p]) || parseInt(parts[p], 10) <= 0) {
-            alert("Candidate counts must be positive whole numbers separated by commas.", scriptTitle);
-            return;
-        }
-        candidateCounts.push(parseInt(parts[p], 10));
-    }
-    if (candidateCounts.length !== maxGroups) {
-        alert("You entered " + maxGroups + " groups but " + candidateCounts.length + " candidate counts. These must match.", scriptTitle);
+    var candidatesPerGroup = parseInt(candidatesInput, 10);
+    if (isNaN(candidatesPerGroup) || candidatesPerGroup <= 0) {
+        alert("Please enter a valid positive number.", scriptTitle);
         return;
     }
 
@@ -93,15 +85,14 @@ function main() {
     var orderErrors = [];
     var flagged = {}; // names of found squares with at least one error
     var totalFoundObjects = 0;
-    var totalExpectedObjects = 0;
+    var totalExpectedObjects = maxGroups * candidatesPerGroup;
     var prevGroupTop = null; // top square of the previous group that had any squares
 
     for (var i = 1; i <= maxGroups; i++) {
         var groupTop = null;  // first found square in this group
         var prevSquare = null; // last found square in this group
 
-        for (var j = 1; j <= candidateCounts[i - 1]; j++) {
-            totalExpectedObjects++;
+        for (var j = 1; j <= candidatesPerGroup; j++) {
             var targetName = "BTLChoiceSquareGrp" + pad(i) + "Can" + pad(j);
 
             if (!itemsMap.hasOwnProperty(targetName)) {
